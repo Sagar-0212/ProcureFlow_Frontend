@@ -1,20 +1,19 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useProcurement } from '../../context/ProcurementContext';
+import { dashboardService, DashboardSummaryResponse } from '../../services/dashboardService';
 import {
   FileSpreadsheet,
-  CheckCircle,
   Clock,
   AlertTriangle,
   ShoppingBag,
-  Truck,
   Receipt,
   Boxes,
   ArrowRight,
-  TrendingUp,
   ShieldAlert,
   ArrowUpRight,
   PlusCircle,
-  ExternalLink,
+  RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 
 export const DashboardView: React.FC<{ onOpenNewPR: () => void }> = ({ onOpenNewPR }) => {
@@ -30,13 +29,45 @@ export const DashboardView: React.FC<{ onOpenNewPR: () => void }> = ({ onOpenNew
     resolveMissingDeliveryShortcut,
   } = useProcurement();
 
+  const [summary, setSummary] = useState<DashboardSummaryResponse | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchDashboardSummary = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await dashboardService.getSummary();
+      setSummary(data);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to fetch dashboard summary from backend.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDashboardSummary();
+  }, []);
+
   const pendingPRs = purchaseRequests.filter((pr) => pr.status === 'PENDING_APPROVAL');
   const activePOs = purchaseOrders.filter((po) => po.status === 'ISSUED' || po.status === 'PARTIALLY_RECEIVED');
   const mismatchedInvoices = invoices.filter((inv) => inv.status === 'MATCH_FAILED');
-  const verifiedInvoices = invoices.filter((inv) => inv.status === 'MATCH_VERIFIED');
   const lowStockProducts = products.filter((p) => p.currentStock <= p.reorderLevel);
 
   const totalInventoryValue = products.reduce((acc, p) => acc + p.currentStock * p.defaultPrice, 0);
+
+  // Derived real backend metric values with fallback to local state if pending
+  const totalPRCount = summary ? summary.totalPurchaseRequests : purchaseRequests.length;
+  const pendingPRCount = summary ? summary.pendingApprovals : pendingPRs.length;
+
+  const totalPOCount = summary ? summary.totalPurchaseOrders : activePOs.length;
+  const partialPOCount = summary ? summary.partialPOCount : 1;
+
+  const mismatchedInvoiceCount = summary ? (summary.mismatchedInvoicesCount ?? summary.mismatchedInvoices) : mismatchedInvoices.length;
+
+  const inventoryItemCount = summary ? (summary.totalInventoryItemsCount ?? summary.totalInventoryItems) : products.length;
+  const backendLowStockList = summary?.lowStockProducts || [];
 
   return (
     <div className="space-y-6">
@@ -46,8 +77,11 @@ export const DashboardView: React.FC<{ onOpenNewPR: () => void }> = ({ onOpenNew
           <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
             Workspace Overview · {currentUser.departmentName}
           </div>
-          <h1 className="text-xl font-bold text-slate-900 mt-1">
-            Welcome back, {currentUser.name}
+          <h1 className="text-xl font-bold text-slate-900 mt-1 flex items-center gap-2">
+            <span>Welcome back, {currentUser.name}</span>
+            {loading && (
+              <RefreshCw className="w-4 h-4 text-indigo-500 animate-spin" title="Refreshing from API..." />
+            )}
           </h1>
           <p className="text-sm text-slate-600 mt-1 max-w-2xl">
             Centralized procurement control center for requisitions, multi-quote evaluation, partial deliveries,
@@ -56,6 +90,15 @@ export const DashboardView: React.FC<{ onOpenNewPR: () => void }> = ({ onOpenNew
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
+          <button
+            onClick={fetchDashboardSummary}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded-lg transition-colors border border-slate-200"
+            title="Refresh API Data"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </button>
           <button
             onClick={onOpenNewPR}
             className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium rounded-lg shadow-sm transition-colors"
@@ -73,7 +116,26 @@ export const DashboardView: React.FC<{ onOpenNewPR: () => void }> = ({ onOpenNew
         </div>
       </div>
 
-      {/* Critical Business Scenario Highlight Banner (Thinqloud assessment focal point) */}
+      {/* Error Banner */}
+      {error && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 text-rose-900 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+            <div className="text-xs">
+              <span className="font-bold">Backend Summary Error: </span>
+              <span>{error}</span>
+            </div>
+          </div>
+          <button
+            onClick={fetchDashboardSummary}
+            className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Critical Business Scenario Highlight Banner */}
       {mismatchedInvoices.length > 0 && (
         <div className="bg-rose-50 border border-rose-200 rounded-xl p-5 text-rose-900">
           <div className="flex items-start justify-between gap-4">
@@ -122,17 +184,18 @@ export const DashboardView: React.FC<{ onOpenNewPR: () => void }> = ({ onOpenNew
       {/* 4 Core Quantitative Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Metric 1 */}
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm relative overflow-hidden">
+          {loading && <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center"><div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>}
           <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
             <span>Purchase Requests</span>
             <FileSpreadsheet className="w-4 h-4 text-slate-400" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-bold font-mono text-slate-900">
-              {purchaseRequests.length}
+              {totalPRCount}
             </span>
             <span className="text-xs text-slate-500">
-              ({pendingPRs.length} pending approval)
+              ({pendingPRCount} pending approval)
             </span>
           </div>
           <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
@@ -147,17 +210,18 @@ export const DashboardView: React.FC<{ onOpenNewPR: () => void }> = ({ onOpenNew
         </div>
 
         {/* Metric 2 */}
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm relative overflow-hidden">
+          {loading && <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center"><div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>}
           <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
             <span>Purchase Orders Active</span>
             <ShoppingBag className="w-4 h-4 text-slate-400" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-bold font-mono text-slate-900">
-              {activePOs.length}
+              {totalPOCount}
             </span>
             <span className="text-xs text-amber-600 font-medium">
-              (1 partial delivery)
+              ({partialPOCount} partial delivery)
             </span>
           </div>
           <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
@@ -172,7 +236,8 @@ export const DashboardView: React.FC<{ onOpenNewPR: () => void }> = ({ onOpenNew
         </div>
 
         {/* Metric 3 */}
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm relative overflow-hidden">
+          {loading && <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center"><div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>}
           <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
             <span>3-Way Invoices</span>
             <Receipt className="w-4 h-4 text-slate-400" />
@@ -181,8 +246,8 @@ export const DashboardView: React.FC<{ onOpenNewPR: () => void }> = ({ onOpenNew
             <span className="text-2xl font-bold font-mono text-slate-900">
               {invoices.length}
             </span>
-            <span className={`text-xs font-medium ${mismatchedInvoices.length > 0 ? 'text-rose-600 font-semibold' : 'text-emerald-600'}`}>
-              {mismatchedInvoices.length > 0 ? `${mismatchedInvoices.length} blocked` : 'all verified'}
+            <span className={`text-xs font-medium ${mismatchedInvoiceCount > 0 ? 'text-rose-600 font-semibold' : 'text-emerald-600'}`}>
+              {mismatchedInvoiceCount > 0 ? `${mismatchedInvoiceCount} blocked` : 'all verified'}
             </span>
           </div>
           <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
@@ -197,7 +262,8 @@ export const DashboardView: React.FC<{ onOpenNewPR: () => void }> = ({ onOpenNew
         </div>
 
         {/* Metric 4 */}
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm relative overflow-hidden">
+          {loading && <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center"><div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>}
           <div className="flex items-center justify-between text-slate-500 text-xs font-medium">
             <span>Warehouse Stock Value</span>
             <Boxes className="w-4 h-4 text-slate-400" />
@@ -207,7 +273,7 @@ export const DashboardView: React.FC<{ onOpenNewPR: () => void }> = ({ onOpenNew
               ${totalInventoryValue.toLocaleString()}
             </span>
             <span className="text-xs text-amber-600">
-              ({lowStockProducts.length} low stock)
+              ({backendLowStockList.length > 0 ? backendLowStockList.length : lowStockProducts.length} low stock)
             </span>
           </div>
           <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
@@ -240,14 +306,14 @@ export const DashboardView: React.FC<{ onOpenNewPR: () => void }> = ({ onOpenNew
 
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
           {[
-            { id: 'requests', label: '1. Requisition', count: purchaseRequests.length, color: 'border-slate-200 hover:border-slate-400' },
-            { id: 'approvals', label: '2. Approval', count: pendingPRs.length ? `${pendingPRs.length} req` : 'Clear', color: 'border-slate-200 hover:border-slate-400' },
+            { id: 'requests', label: '1. Requisition', count: totalPRCount, color: 'border-slate-200 hover:border-slate-400' },
+            { id: 'approvals', label: '2. Approval', count: pendingPRCount ? `${pendingPRCount} req` : 'Clear', color: 'border-slate-200 hover:border-slate-400' },
             { id: 'quotations', label: '3. Quotes (RFQ)', count: '3 Bids', color: 'border-slate-200 hover:border-slate-400' },
-            { id: 'orders', label: '4. Purchase Order', count: purchaseOrders.length, color: 'border-slate-200 hover:border-slate-400' },
+            { id: 'orders', label: '4. Purchase Order', count: totalPOCount, color: 'border-slate-200 hover:border-slate-400' },
             { id: 'receiving', label: '5. Goods Receipt', count: goodsReceipts.length, color: 'border-slate-200 hover:border-slate-400' },
-            { id: 'finance', label: '6. 3-Way Match', count: mismatchedInvoices.length > 0 ? 'Mismatch' : 'Verified', color: mismatchedInvoices.length > 0 ? 'border-rose-300 bg-rose-50/50' : 'border-slate-200' },
+            { id: 'finance', label: '6. 3-Way Match', count: mismatchedInvoiceCount > 0 ? 'Mismatch' : 'Verified', color: mismatchedInvoiceCount > 0 ? 'border-rose-300 bg-rose-50/50' : 'border-slate-200' },
             { id: 'finance', label: '7. Payment', count: invoices.filter(i => i.status === 'PAID').length ? 'Paid' : 'Pending', color: 'border-slate-200' },
-            { id: 'inventory', label: '8. Stock Ledger', count: 'Updated', color: 'border-slate-200' },
+            { id: 'inventory', label: '8. Stock Ledger', count: `${inventoryItemCount} items`, color: 'border-slate-200' },
           ].map((stage, idx) => (
             <button
               key={idx}
@@ -328,32 +394,58 @@ export const DashboardView: React.FC<{ onOpenNewPR: () => void }> = ({ onOpenNew
                 </div>
               ))}
 
-              {/* Task 3: Low stock warning */}
-              {lowStockProducts.map((prod) => (
-                <div
-                  key={prod.id}
-                  className="p-3.5 rounded-lg border border-slate-200 bg-slate-50 flex items-start justify-between gap-3"
-                >
-                  <div className="flex items-start gap-3">
-                    <Boxes className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
-                    <div>
-                      <div className="text-xs font-semibold text-slate-900">
-                        Low Stock Alert: {prod.name} (SKU: {prod.sku})
-                      </div>
-                      <div className="text-xs text-slate-600 mt-0.5">
-                        Current stock is {prod.currentStock} {prod.unit} (reorder threshold is {prod.reorderLevel} {prod.unit}).
-                        Average monthly consumption: {prod.averageMonthlyUsage} {prod.unit}.
+              {/* Task 3: Backend Low Stock items or local low stock items */}
+              {backendLowStockList.length > 0 ? (
+                backendLowStockList.map((ls) => (
+                  <div
+                    key={ls.productId}
+                    className="p-3.5 rounded-lg border border-slate-200 bg-slate-50 flex items-start justify-between gap-3"
+                  >
+                    <div className="flex items-start gap-3">
+                      <Boxes className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+                      <div>
+                        <div className="text-xs font-semibold text-slate-900">
+                          Low Stock Alert (API): {ls.productName} (SKU: {ls.productSku})
+                        </div>
+                        <div className="text-xs text-slate-600 mt-0.5">
+                          Current stock is {ls.currentStock} (reorder threshold is {ls.minimumStockLevel}).
+                        </div>
                       </div>
                     </div>
+                    <button
+                      onClick={() => setActiveTab('inventory')}
+                      className="px-2.5 py-1 text-xs font-medium bg-slate-900 hover:bg-slate-800 text-white rounded transition-colors shrink-0"
+                    >
+                      Reorder
+                    </button>
                   </div>
-                  <button
-                    onClick={() => setActiveTab('inventory')}
-                    className="px-2.5 py-1 text-xs font-medium bg-slate-900 hover:bg-slate-800 text-white rounded transition-colors shrink-0"
+                ))
+              ) : (
+                lowStockProducts.map((prod) => (
+                  <div
+                    key={prod.id}
+                    className="p-3.5 rounded-lg border border-slate-200 bg-slate-50 flex items-start justify-between gap-3"
                   >
-                    Reorder
-                  </button>
-                </div>
-              ))}
+                    <div className="flex items-start gap-3">
+                      <Boxes className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+                      <div>
+                        <div className="text-xs font-semibold text-slate-900">
+                          Low Stock Alert: {prod.name} (SKU: {prod.sku})
+                        </div>
+                        <div className="text-xs text-slate-600 mt-0.5">
+                          Current stock is {prod.currentStock} {prod.unit} (reorder threshold is {prod.reorderLevel} {prod.unit}).
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setActiveTab('inventory')}
+                      className="px-2.5 py-1 text-xs font-medium bg-slate-900 hover:bg-slate-800 text-white rounded transition-colors shrink-0"
+                    >
+                      Reorder
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
