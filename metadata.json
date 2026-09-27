@@ -1,0 +1,6 @@
+{
+  "name": "ProcureFlow - Procurement Management Platform",
+  "description": "Enterprise purchase and procurement management platform featuring automated approval workflows, supplier quotation comparison, purchase orders, partial goods receipts, three-way matching, invoice verification, and inventory updates.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
