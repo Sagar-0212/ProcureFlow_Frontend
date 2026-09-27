@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { useAuth } from './AuthContext';
 import {
   User,
   UserRole,
@@ -121,6 +122,8 @@ const ProcurementContext = createContext<ProcurementContextType | undefined>(und
 const STORAGE_KEY_PREFIX = 'procureflow_v1_';
 
 export const ProcurementProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const auth = useAuth();
+
   // Local storage helpers
   const loadStored = <T,>(key: string, fallback: T): T => {
     try {
@@ -133,8 +136,14 @@ export const ProcurementProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   const [users] = useState<User[]>(INITIAL_USERS);
   const [currentUser, setCurrentUser] = useState<User>(() => {
-    return loadStored('currentUser', INITIAL_USERS[0]);
+    return auth?.user || loadStored('currentUser', INITIAL_USERS[0]);
   });
+
+  useEffect(() => {
+    if (auth?.user) {
+      setCurrentUser(auth.user);
+    }
+  }, [auth?.user]);
   const [departments] = useState<Department[]>(INITIAL_DEPARTMENTS);
   const [approvalRules] = useState<ApprovalRule[]>(INITIAL_APPROVAL_RULES);
   const [products, setProducts] = useState<Product[]>(() => loadStored('products', INITIAL_PRODUCTS));

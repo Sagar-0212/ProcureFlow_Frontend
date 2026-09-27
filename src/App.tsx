@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { ProcurementProvider, useProcurement } from './context/ProcurementContext';
+import { LoginPage } from './components/auth/LoginPage';
 import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
 import { DemoWalkthroughBar } from './components/layout/DemoWalkthroughBar';
@@ -89,10 +91,33 @@ const MainLayout: React.FC = () => {
   );
 };
 
-export default function App() {
+const ProtectedAppContent: React.FC = () => {
+  const { isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-900 text-white">
+        <div className="w-10 h-10 border-4 border-emerald-400 border-t-transparent rounded-full animate-spin"></div>
+        <p className="mt-4 text-sm font-medium text-slate-400">Verifying session with backend...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+
   return (
     <ProcurementProvider>
       <MainLayout />
     </ProcurementProvider>
+  );
+};
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <ProtectedAppContent />
+    </AuthProvider>
   );
 }
