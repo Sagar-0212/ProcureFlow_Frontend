@@ -1,6 +1,7 @@
 import React from 'react';
 import { PurchaseRequest } from '../../types';
 import { useProcurement } from '../../context/ProcurementContext';
+import { isTabAccessible } from '../../utils/rbac';
 import { X, CheckCircle, Clock, XCircle, ArrowRight, UserCheck, Shield } from 'lucide-react';
 
 interface Props {
@@ -33,8 +34,6 @@ export const PurchaseRequestDetailModal: React.FC<Props> = ({ pr, onClose, onApp
                     ? 'bg-emerald-100 text-emerald-800'
                     : pr.status === 'PENDING_APPROVAL'
                     ? 'bg-amber-100 text-amber-800'
-                    : pr.status === 'PO_CREATED'
-                    ? 'bg-indigo-100 text-indigo-800'
                     : pr.status === 'REJECTED'
                     ? 'bg-rose-100 text-rose-800'
                     : 'bg-slate-100 text-slate-700'
@@ -182,7 +181,7 @@ export const PurchaseRequestDetailModal: React.FC<Props> = ({ pr, onClose, onApp
               Close
             </button>
 
-            {pr.status === 'APPROVED' && (
+            {pr.status === 'APPROVED' && isTabAccessible('quotations', currentUser.role) && (
               <button
                 type="button"
                 onClick={() => {

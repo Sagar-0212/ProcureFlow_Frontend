@@ -21,13 +21,15 @@ export const ApprovalsView: React.FC = () => {
     approvalRules,
     approvePurchaseRequest,
     rejectPurchaseRequest,
-    switchRole,
+    moduleErrors,
+    fetchModuleData,
   } = useProcurement();
 
   const [activeModalPR, setActiveModalPR] = useState<PurchaseRequest | null>(null);
   const [modalAction, setModalAction] = useState<'APPROVE' | 'REJECT'>('APPROVE');
   const [comments, setComments] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const pendingRequests = purchaseRequests.filter((pr) => pr.status === 'PENDING_APPROVAL');
   const pastApprovals = purchaseRequests.filter((pr) => pr.status === 'APPROVED' || pr.status === 'REJECTED');
@@ -45,7 +47,7 @@ export const ApprovalsView: React.FC = () => {
     setError(null);
   };
 
-  const handleConfirmAction = (e: React.FormEvent) => {
+  const handleConfirmAction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeModalPR) return;
     setError(null);
@@ -55,15 +57,18 @@ export const ApprovalsView: React.FC = () => {
       return;
     }
 
+    setIsSubmitting(true);
     try {
       if (modalAction === 'APPROVE') {
-        approvePurchaseRequest(activeModalPR.id, comments);
+        await approvePurchaseRequest(activeModalPR.id, comments);
       } else {
-        rejectPurchaseRequest(activeModalPR.id, comments);
+        await rejectPurchaseRequest(activeModalPR.id, comments);
       }
       setActiveModalPR(null);
     } catch (err: any) {
-      setError(err.message || 'Operation failed.');
+      setError(err?.message || 'Operation failed.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -81,18 +86,24 @@ export const ApprovalsView: React.FC = () => {
         </div>
 
         {!isAuthorized && (
-          <div className="flex items-center gap-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs">
+          <div className="flex items-center gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-xs">
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-            <span>You are currently viewing as <strong>{currentUser.role}</strong>. Switch to <strong>Manager</strong> or <strong>Admin</strong> to authorize requisitions:</span>
-            <button
-              onClick={() => switchRole('MANAGER')}
-              className="px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded text-xs transition-colors shrink-0"
-            >
-              Switch to Sarah (Manager)
-            </button>
+            <span>Requisition approvals require <strong>MANAGER</strong> or <strong>ADMIN</strong> role (Current: <strong>{currentUser.role}</strong>).</span>
           </div>
         )}
       </div>
+
+      {moduleErrors['purchaseRequests'] && (
+        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-center justify-between">
+          <span>{moduleErrors['purchaseRequests']}</span>
+          <button
+            onClick={() => fetchModuleData('purchaseRequests')}
+            className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-xs font-semibold"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Approval Rules Reference Card */}
       <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
@@ -191,12 +202,9 @@ export const ApprovalsView: React.FC = () => {
                       </button>
                     </div>
                   ) : (
-                    <button
-                      onClick={() => switchRole('MANAGER')}
-                      className="px-3 py-1.5 bg-slate-900 text-white text-xs font-medium rounded-lg"
-                    >
-                      Login as Manager to Approve
-                    </button>
+                    <span className="text-xs text-slate-400 italic px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg">
+                      Manager approval required
+                    </span>
                   )}
                 </div>
               </div>

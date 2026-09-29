@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useProcurement } from '../../context/ProcurementContext';
+import { isTabAccessible } from '../../utils/rbac';
 import { Invoice } from '../../types';
 import {
   Receipt,
@@ -25,8 +26,10 @@ export const ThreeWayMatchingView: React.FC = () => {
     goodsReceipts,
     payments,
     evaluateThreeWayMatch,
-    resolveMissingDeliveryShortcut,
     setActiveTab,
+    moduleErrors,
+    fetchModuleData,
+    currentUser,
   } = useProcurement();
 
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string>(invoices[0]?.id || '');
@@ -92,15 +95,17 @@ export const ThreeWayMatchingView: React.FC = () => {
 
                 {/* Resolution CTA Shortcut */}
                 <div className="shrink-0 flex flex-col sm:items-end gap-2">
-                  <button
-                    onClick={() => resolveMissingDeliveryShortcut(selectedInvoice.purchaseOrderId)}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold rounded-lg shadow transition-colors"
-                  >
-                    <Truck className="w-4 h-4" />
-                    <span>Receive Remaining 2 Laptops (GRN-2002)</span>
-                  </button>
+                  {isTabAccessible('receiving', currentUser.role) && (
+                    <button
+                      onClick={() => setActiveTab('receiving')}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold rounded-lg shadow transition-colors"
+                    >
+                      <Truck className="w-4 h-4" />
+                      <span>Go to Receiving (GRN)</span>
+                    </button>
+                  )}
                   <span className="text-[11px] text-rose-700">
-                    Live demo shortcut to resolve delivery gap
+                    Process physical goods arrival in warehouse
                   </span>
                 </div>
               </div>
@@ -349,19 +354,21 @@ export const ThreeWayMatchingView: React.FC = () => {
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold ${
                           inv.status === 'PAID'
                             ? 'bg-emerald-100 text-emerald-800'
-                            : inv.status === 'MATCH_VERIFIED'
+                            : inv.status === 'MATCHED' || inv.status === 'APPROVED'
                             ? 'bg-emerald-50 text-emerald-700 border border-emerald-300'
-                            : 'bg-rose-50 text-rose-700 border border-rose-300 font-bold'
+                            : inv.status === 'MISMATCH'
+                            ? 'bg-rose-50 text-rose-700 border border-rose-300 font-bold'
+                            : 'bg-amber-50 text-amber-700 border border-amber-300'
                         }`}
                       >
                         {inv.status === 'PAID' && <CheckCircle2 className="w-3 h-3 text-emerald-700" />}
-                        {inv.status === 'MATCH_VERIFIED' && <Unlock className="w-3 h-3 text-emerald-600" />}
-                        {inv.status === 'MATCH_FAILED' && <Lock className="w-3 h-3 text-rose-600" />}
+                        {(inv.status === 'MATCHED' || inv.status === 'APPROVED') && <Unlock className="w-3 h-3 text-emerald-600" />}
+                        {inv.status === 'MISMATCH' && <Lock className="w-3 h-3 text-rose-600" />}
                         <span>{inv.status.replace('_', ' ')}</span>
                       </span>
                     </td>
                     <td className="py-3.5 px-4 text-center font-sans">
-                      {inv.status === 'MATCH_VERIFIED' ? (
+                      {inv.status === 'MATCHED' || inv.status === 'APPROVED' ? (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -372,7 +379,7 @@ export const ThreeWayMatchingView: React.FC = () => {
                         >
                           Disburse
                         </button>
-                      ) : inv.status === 'MATCH_FAILED' ? (
+                      ) : inv.status === 'MISMATCH' ? (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -382,8 +389,10 @@ export const ThreeWayMatchingView: React.FC = () => {
                         >
                           Inspect Mismatch
                         </button>
-                      ) : (
+                      ) : inv.status === 'PAID' ? (
                         <span className="text-[11px] text-emerald-600 font-semibold">Settled</span>
+                      ) : (
+                        <span className="text-[11px] text-slate-500">Pending</span>
                       )}
                     </td>
                   </tr>

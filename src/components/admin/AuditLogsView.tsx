@@ -3,7 +3,7 @@ import { useProcurement } from '../../context/ProcurementContext';
 import { History, Search, Filter, ShieldCheck, User } from 'lucide-react';
 
 export const AuditLogsView: React.FC = () => {
-  const { auditLogs } = useProcurement();
+  const { auditLogs, moduleErrors, refreshAllData } = useProcurement();
 
   const [search, setSearch] = useState('');
   const [entityFilter, setEntityFilter] = useState('ALL');
@@ -31,6 +31,18 @@ export const AuditLogsView: React.FC = () => {
           Immutable event log tracking all state transitions: Requisitions, manager approvals, quotations, PO issuance, partial receipts, 3-way match exceptions, and disbursements
         </p>
       </div>
+
+      {moduleErrors['audit'] && (
+        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-center justify-between">
+          <span>{moduleErrors['audit']}</span>
+          <button
+            onClick={() => refreshAllData()}
+            className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-xs font-semibold"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Filter and Search */}
       <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">

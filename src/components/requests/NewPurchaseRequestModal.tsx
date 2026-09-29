@@ -100,7 +100,7 @@ export const NewPurchaseRequestModal: React.FC<Props> = ({ isOpen, onClose }) =>
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
           <div>
             <h3 className="text-base font-bold text-slate-900">Create New Purchase Request (PR)</h3>
-            <p className="text-xs text-slate-500">Initiate procurement workflow per thinqloud business policy</p>
+            <p className="text-xs text-slate-500">Initiate procurement requisition workflow per organization purchasing policy</p>
           </div>
           <button
             onClick={onClose}

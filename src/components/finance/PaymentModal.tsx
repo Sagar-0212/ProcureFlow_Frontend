@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Invoice } from '../../types';
+import { Invoice, PaymentMethod } from '../../types';
 import { useProcurement } from '../../context/ProcurementContext';
 import { X, CreditCard, ShieldCheck, AlertTriangle } from 'lucide-react';
 
@@ -10,24 +10,27 @@ interface Props {
 }
 
 export const PaymentModal: React.FC<Props> = ({ invoice, isOpen, onClose }) => {
-  const { processPayment, currentUser, switchRole } = useProcurement();
+  const { processPayment, currentUser } = useProcurement();
 
-  const [paymentMethod, setPaymentMethod] = useState<'NEFT_RTGS' | 'BANK_TRANSFER' | 'CORPORATE_CARD' | 'CHEQUE'>('NEFT_RTGS');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('BANK_TRANSFER');
   const [referenceNumber, setReferenceNumber] = useState(`TXN-${Date.now().toString().slice(-6)}`);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   if (!isOpen || !invoice) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    try {
-      if (currentUser.role !== 'FINANCE' && currentUser.role !== 'ADMIN') {
-        switchRole('FINANCE');
-      }
+    if (currentUser.role !== 'FINANCE_OFFICER' && currentUser.role !== 'ADMIN') {
+      setError('Payment disbursement requires FINANCE_OFFICER or ADMIN role.');
+      return;
+    }
 
-      processPayment({
+    setLoading(true);
+    try {
+      await processPayment({
         invoiceId: invoice.id,
         paymentMethod,
         referenceNumber,
@@ -35,7 +38,9 @@ export const PaymentModal: React.FC<Props> = ({ invoice, isOpen, onClose }) => {
 
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Payment execution blocked by business rules.');
+      setError(err?.message || 'Payment execution blocked by business rules.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -95,13 +100,14 @@ export const PaymentModal: React.FC<Props> = ({ invoice, isOpen, onClose }) => {
             </label>
             <select
               value={paymentMethod}
-              onChange={(e) => setPaymentMethod(e.target.value as any)}
+              onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
               className="w-full text-xs bg-white border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900"
             >
-              <option value="NEFT_RTGS">NEFT / RTGS Wire Transfer</option>
-              <option value="BANK_TRANSFER">Direct Commercial ACH</option>
-              <option value="CORPORATE_CARD">Corporate Procurement Card</option>
+              <option value="BANK_TRANSFER">Bank Wire Transfer (ACH / NEFT)</option>
+              <option value="UPI">UPI Digital Transfer</option>
               <option value="CHEQUE">Treasury Bank Cheque</option>
+              <option value="CASH">Cash Disbursement</option>
+              <option value="OTHER">Other Authorized Method</option>
             </select>
           </div>
 
@@ -133,9 +139,10 @@ export const PaymentModal: React.FC<Props> = ({ invoice, isOpen, onClose }) => {
             </button>
             <button
               type="submit"
-              className="px-5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-sm transition-colors"
+              disabled={loading}
+              className="px-5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-sm transition-colors disabled:opacity-50"
             >
-              Authorize &amp; Disburse
+              {loading ? 'Disbursing...' : 'Authorize & Disburse'}
             </button>
           </div>
         </form>

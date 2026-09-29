@@ -13,13 +13,13 @@ import {
 import { NewGoodsReceiptModal } from './NewGoodsReceiptModal';
 
 export const GoodsReceiptView: React.FC = () => {
-  const { goodsReceipts, purchaseOrders, setActiveTab } = useProcurement();
+  const { goodsReceipts, purchaseOrders, setActiveTab, moduleErrors, fetchModuleData } = useProcurement();
 
   const [search, setSearch] = useState('');
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
 
   const openPOs = purchaseOrders.filter(
-    (p) => p.status === 'ISSUED' || p.status === 'PARTIALLY_RECEIVED'
+    (p) => p.status === 'SENT_TO_SUPPLIER' || p.status === 'PARTIALLY_RECEIVED' || p.status === 'APPROVED'
   );
 
   const filteredGRNs = goodsReceipts.filter((gr) => {
@@ -53,26 +53,17 @@ export const GoodsReceiptView: React.FC = () => {
         </button>
       </div>
 
-      {/* Partial Delivery Architecture Principle Card */}
-      <div className="bg-slate-900 text-white rounded-xl p-5 shadow-sm space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="p-1 bg-indigo-500 rounded text-white">
-              <Truck className="w-4 h-4" />
-            </span>
-            <h2 className="text-sm font-bold text-slate-100">
-              Thinqloud Architectural Design: Partial Delivery Handling
-            </h2>
-          </div>
-          <span className="text-[11px] font-mono text-slate-400">1 PO → N Receipts</span>
+      {moduleErrors['goodsReceipts'] && (
+        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-center justify-between">
+          <span>{moduleErrors['goodsReceipts']}</span>
+          <button
+            onClick={() => fetchModuleData('goodsReceipts')}
+            className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-xs font-semibold"
+          >
+            Retry
+          </button>
         </div>
-        <p className="text-xs text-slate-300 leading-relaxed max-w-4xl">
-          Purchase orders frequently arrive in separated multi-batch consignments. ProcureFlow models this as a clean 1:N
-          relationship: each delivery creates a distinct Goods Receipt Note (GRN) and increments inventory only for accepted
-          physical units. When 8 of 10 items arrive, the PO enters <code className="text-amber-300 font-mono">PARTIALLY_RECEIVED</code>.
-          Only when the final 2 units arrive does it advance to <code className="text-emerald-300 font-mono">FULLY_RECEIVED</code>.
-        </p>
-      </div>
+      )}
 
       {/* Search */}
       <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm flex items-center gap-3">

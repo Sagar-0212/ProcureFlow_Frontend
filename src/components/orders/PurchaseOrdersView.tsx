@@ -14,7 +14,7 @@ import { PurchaseOrderDetailModal } from './PurchaseOrderDetailModal';
 import { NewGoodsReceiptModal } from '../receiving/NewGoodsReceiptModal';
 
 export const PurchaseOrdersView: React.FC = () => {
-  const { purchaseOrders, setActiveTab } = useProcurement();
+  const { purchaseOrders, setActiveTab, moduleErrors, fetchModuleData } = useProcurement();
 
   const [search, setSearch] = useState('');
   const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
@@ -49,6 +49,18 @@ export const PurchaseOrdersView: React.FC = () => {
           <ArrowRight className="w-4 h-4" />
         </button>
       </div>
+
+      {moduleErrors['purchaseOrders'] && (
+        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-center justify-between">
+          <span>{moduleErrors['purchaseOrders']}</span>
+          <button
+            onClick={() => fetchModuleData('purchaseOrders')}
+            className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-xs font-semibold"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Search */}
       <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm flex items-center gap-3">
@@ -136,7 +148,7 @@ export const PurchaseOrdersView: React.FC = () => {
                       <td className="py-3.5 px-4">
                         <span
                           className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold ${
-                            po.status === 'FULLY_RECEIVED' || po.status === 'CLOSED'
+                            po.status === 'FULLY_RECEIVED' || po.status === 'COMPLETED'
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                               : po.status === 'PARTIALLY_RECEIVED'
                               ? 'bg-amber-50 text-amber-700 border border-amber-200 font-semibold'
@@ -160,7 +172,7 @@ export const PurchaseOrdersView: React.FC = () => {
                           >
                             <Eye className="w-4 h-4" />
                           </button>
-                          {po.status !== 'FULLY_RECEIVED' && po.status !== 'CLOSED' && (
+                          {po.status !== 'FULLY_RECEIVED' && po.status !== 'COMPLETED' && po.status !== 'CANCELLED' && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();

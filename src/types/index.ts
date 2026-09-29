@@ -1,4 +1,9 @@
-export type UserRole = 'EMPLOYEE' | 'MANAGER' | 'PROCUREMENT' | 'FINANCE' | 'ADMIN';
+export type UserRole =
+  | 'ADMIN'
+  | 'EMPLOYEE'
+  | 'MANAGER'
+  | 'PROCUREMENT_OFFICER'
+  | 'FINANCE_OFFICER';
 
 export interface User {
   id: string;
@@ -15,7 +20,15 @@ export interface Department {
   name: string;
   code: string;
   budget: number;
-  managerId: string;
+  managerId?: string;
+  managerName?: string;
+  description?: string;
+}
+
+export interface Category {
+  id: string;
+  name: string;
+  description?: string;
 }
 
 export interface Product {
@@ -29,6 +42,7 @@ export interface Product {
   reorderLevel: number;
   leadTimeDays: number;
   averageMonthlyUsage: number;
+  isActive?: boolean;
 }
 
 export interface Supplier {
@@ -44,14 +58,14 @@ export interface Supplier {
   isActive: boolean;
 }
 
+// Exactly matching Spring Boot backend statuses
 export type PRStatus = 
   | 'DRAFT' 
+  | 'SUBMITTED'
   | 'PENDING_APPROVAL' 
   | 'APPROVED' 
   | 'REJECTED' 
-  | 'CANCELLED' 
-  | 'IN_QUOTATION' 
-  | 'PO_CREATED';
+  | 'CANCELLED';
 
 export interface PurchaseRequestItem {
   id: string;
@@ -61,6 +75,16 @@ export interface PurchaseRequestItem {
   quantity: number;
   estimatedUnitPrice: number;
   estimatedTotal: number;
+}
+
+export interface ApprovalAction {
+  id: string;
+  purchaseRequestId: string;
+  approverId: string;
+  approverName: string;
+  action: 'APPROVED' | 'REJECTED';
+  comments: string;
+  approvedAt: string;
 }
 
 export interface PurchaseRequest {
@@ -79,16 +103,6 @@ export interface PurchaseRequest {
   approvalHistory: ApprovalAction[];
 }
 
-export interface ApprovalAction {
-  id: string;
-  purchaseRequestId: string;
-  approverId: string;
-  approverName: string;
-  action: 'APPROVED' | 'REJECTED';
-  comments: string;
-  approvedAt: string;
-}
-
 export interface ApprovalRule {
   id: string;
   minAmount: number;
@@ -96,6 +110,7 @@ export interface ApprovalRule {
   requiredRole: UserRole;
   approvalLevel: number;
   description: string;
+  isActive?: boolean;
 }
 
 export interface QuotationItem {
@@ -129,12 +144,16 @@ export interface Quotation {
   notes?: string;
 }
 
+// Exactly matching Spring Boot backend statuses
 export type POStatus = 
-  | 'ISSUED' 
+  | 'DRAFT'
+  | 'PENDING_APPROVAL'
+  | 'APPROVED'
+  | 'SENT_TO_SUPPLIER'
   | 'PARTIALLY_RECEIVED' 
   | 'FULLY_RECEIVED' 
-  | 'CANCELLED' 
-  | 'CLOSED';
+  | 'COMPLETED'
+  | 'CANCELLED';
 
 export interface PurchaseOrderItem {
   id: string;
@@ -154,7 +173,7 @@ export interface PurchaseOrder {
   purchaseRequestId: string;
   supplierId: string;
   supplierName: string;
-  quotationId: string;
+  quotationId?: string;
   createdBy: string;
   creatorName: string;
   orderDate: string;
@@ -192,7 +211,14 @@ export interface GoodsReceipt {
   items: GoodsReceiptItem[];
 }
 
-export type InvoiceStatus = 'PENDING_MATCH' | 'MATCH_VERIFIED' | 'MATCH_FAILED' | 'PAID' | 'DISPUTED';
+// Exactly matching Spring Boot backend statuses
+export type InvoiceStatus =
+  | 'PENDING_VERIFICATION'
+  | 'MATCHED'
+  | 'MISMATCH'
+  | 'APPROVED'
+  | 'PAID'
+  | 'REJECTED';
 
 export interface InvoiceItem {
   id: string;
@@ -236,27 +262,48 @@ export interface ThreeWayMatchResult {
   canPay: boolean;
 }
 
+// Exactly matching Spring Boot backend statuses
+export type PaymentMethod =
+  | 'BANK_TRANSFER'
+  | 'UPI'
+  | 'CHEQUE'
+  | 'CASH'
+  | 'OTHER';
+
+// Exactly matching Spring Boot backend statuses
+export type PaymentStatus =
+  | 'PENDING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED';
+
 export interface Payment {
   id: string;
   invoiceId: string;
   invoiceNumber: string;
   amount: number;
   paymentDate: string;
-  paymentMethod: 'NEFT_RTGS' | 'BANK_TRANSFER' | 'CORPORATE_CARD' | 'CHEQUE';
+  paymentMethod: PaymentMethod;
   referenceNumber: string;
   processedBy: string;
   processorName: string;
-  status: 'COMPLETED';
+  status: PaymentStatus;
 }
+
+// Exactly matching Spring Boot backend statuses
+export type InventoryTransactionType =
+  | 'RECEIPT'
+  | 'ADJUSTMENT'
+  | 'RETURN';
 
 export interface InventoryTransaction {
   id: string;
   productId: string;
   productName: string;
-  transactionType: 'GOODS_RECEIPT' | 'RETURN_TO_VENDOR' | 'ISSUE_TO_DEPT' | 'STOCK_ADJUSTMENT';
+  transactionType: InventoryTransactionType;
   quantity: number; // positive or negative
   stockAfter: number;
-  referenceType: 'GOODS_RECEIPT' | 'PURCHASE_ORDER' | 'MANUAL';
+  referenceType?: string;
   referenceNumber: string;
   performedBy: string;
   timestamp: string;
@@ -269,7 +316,7 @@ export interface AuditLog {
   userName: string;
   userRole: UserRole;
   action: string;
-  entityType: 'PURCHASE_REQUEST' | 'APPROVAL' | 'QUOTATION' | 'PURCHASE_ORDER' | 'GOODS_RECEIPT' | 'INVOICE' | 'PAYMENT' | 'INVENTORY';
+  entityType: string;
   entityId: string;
   entityReference: string;
   description: string;

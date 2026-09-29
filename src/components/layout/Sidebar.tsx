@@ -1,5 +1,6 @@
 import React from 'react';
 import { useProcurement } from '../../context/ProcurementContext';
+import { isTabAccessible } from '../../utils/rbac';
 import {
   LayoutDashboard,
   FileSpreadsheet,
@@ -11,8 +12,7 @@ import {
   Boxes,
   Database,
   History,
-  GraduationCap,
-  AlertCircle,
+  BarChart3,
 } from 'lucide-react';
 
 export const Sidebar: React.FC = () => {
@@ -22,13 +22,14 @@ export const Sidebar: React.FC = () => {
     purchaseRequests,
     invoices,
     products,
+    currentUser,
   } = useProcurement();
 
   const pendingApprovalsCount = purchaseRequests.filter((pr) => pr.status === 'PENDING_APPROVAL').length;
-  const mismatchInvoicesCount = invoices.filter((inv) => inv.status === 'MATCH_FAILED').length;
+  const mismatchInvoicesCount = invoices.filter((inv) => inv.status === 'MISMATCH').length;
   const lowStockCount = products.filter((p) => p.currentStock <= p.reorderLevel).length;
 
-  const navItems = [
+  const coreLifecycleItems = [
     {
       id: 'dashboard',
       label: 'Dashboard',
@@ -80,6 +81,16 @@ export const Sidebar: React.FC = () => {
       badge: lowStockCount > 0 ? `${lowStockCount} low` : null,
       badgeColor: 'bg-amber-100 text-amber-800',
     },
+  ].filter((item) => isTabAccessible(item.id, currentUser.role));
+
+  const governanceItems = [
+    {
+      id: 'reports',
+      label: 'Reports & Analytics',
+      icon: BarChart3,
+      badge: 'BI',
+      badgeColor: 'bg-indigo-100 text-indigo-800 font-semibold',
+    },
     {
       id: 'masterData',
       label: 'Master Data & Rules',
@@ -92,14 +103,7 @@ export const Sidebar: React.FC = () => {
       icon: History,
       badge: null,
     },
-    {
-      id: 'guide',
-      label: 'Thinqloud Assessment Guide',
-      icon: GraduationCap,
-      badge: 'Project #9',
-      badgeColor: 'bg-indigo-100 text-indigo-800 font-semibold',
-    },
-  ];
+  ].filter((item) => isTabAccessible(item.id, currentUser.role));
 
   return (
     <aside className="w-64 bg-slate-900 border-r border-slate-800 text-slate-300 flex flex-col shrink-0 select-none">
@@ -109,7 +113,7 @@ export const Sidebar: React.FC = () => {
           Core Procurement Lifecycle
         </div>
 
-        {navItems.slice(0, 7).map((item) => {
+        {coreLifecycleItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
           return (
@@ -143,53 +147,60 @@ export const Sidebar: React.FC = () => {
           );
         })}
 
-        <div className="pt-4 px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-          Governance &amp; Intelligence
-        </div>
+        {governanceItems.length > 0 && (
+          <>
+            <div className="pt-4 px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Governance &amp; Intelligence
+            </div>
 
-        {navItems.slice(7).map((item) => {
-          const Icon = item.icon;
-          const isActive = activeTab === item.id;
-          return (
-            <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium rounded-lg transition-colors group ${
-                isActive
-                  ? 'bg-slate-800 text-white font-semibold shadow-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <div className="flex items-center gap-2.5 truncate">
-                <Icon
-                  className={`w-4 h-4 shrink-0 transition-colors ${
-                    isActive ? 'text-indigo-400' : 'text-slate-400 group-hover:text-slate-200'
-                  }`}
-                />
-                <span className="truncate">{item.label}</span>
-              </div>
-              {item.badge && (
-                <span
-                  className={`px-1.5 py-0.5 text-[10px] font-medium rounded-md shrink-0 ${
-                    item.badgeColor || 'bg-slate-800 text-slate-300'
+            {governanceItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveTab(item.id)}
+                  className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium rounded-lg transition-colors group ${
+                    isActive
+                      ? 'bg-slate-800 text-white font-semibold shadow-sm'
+                      : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
                   }`}
                 >
-                  {item.badge}
-                </span>
-              )}
-            </button>
-          );
-        })}
+                  <div className="flex items-center gap-2.5 truncate">
+                    <Icon
+                      className={`w-4 h-4 shrink-0 transition-colors ${
+                        isActive ? 'text-indigo-400' : 'text-slate-400 group-hover:text-slate-200'
+                      }`}
+                    />
+                    <span className="truncate">{item.label}</span>
+                  </div>
+                  {item.badge && (
+                    <span
+                      className={`px-1.5 py-0.5 text-[10px] font-medium rounded-md shrink-0 ${
+                        item.badgeColor || 'bg-slate-800 text-slate-300'
+                      }`}
+                    >
+                      {item.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </>
+        )}
       </div>
 
       {/* Footer System Status Banner */}
       <div className="p-3 border-t border-slate-800 bg-slate-950/40 text-xs">
-        <div className="flex items-center gap-2 text-slate-400">
-          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="font-medium text-slate-300">ProcureFlow Core</span>
+        <div className="flex items-center justify-between text-slate-400">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="font-medium text-slate-300">ProcureFlow Core</span>
+          </div>
+          <span className="text-[10px] font-mono text-slate-500">REST API</span>
         </div>
         <div className="mt-1 text-[11px] text-slate-400">
-          Frontend Engine &amp; Business Rules Active
+          Backend Source of Truth Connected
         </div>
       </div>
     </aside>

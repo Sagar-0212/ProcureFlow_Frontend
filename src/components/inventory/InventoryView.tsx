@@ -15,7 +15,7 @@ import {
 export const InventoryView: React.FC<{ onTriggerReorder: (productId: string, suggestedQty: number) => void }> = ({
   onTriggerReorder,
 }) => {
-  const { products, inventoryTransactions, setActiveTab } = useProcurement();
+  const { products, inventoryTransactions, setActiveTab, moduleErrors, fetchModuleData } = useProcurement();
 
   const [explainModalProdId, setExplainModalProdId] = useState<string | null>(null);
 
@@ -45,7 +45,19 @@ export const InventoryView: React.FC<{ onTriggerReorder: (productId: string, sug
         </div>
       </div>
 
-      {/* Intelligent Feature Spotlight: Smart Reorder Engine (Pages 14-15 of PDF) */}
+      {moduleErrors['inventory'] && (
+        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-center justify-between">
+          <span>{moduleErrors['inventory']}</span>
+          <button
+            onClick={() => fetchModuleData('inventory')}
+            className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-xs font-semibold"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Smart Reorder Engine */}
       <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-xl p-5 text-white shadow-md border border-slate-800 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -54,10 +66,10 @@ export const InventoryView: React.FC<{ onTriggerReorder: (productId: string, sug
             </span>
             <div>
               <h2 className="text-sm font-bold text-white">
-                Intelligent Feature Concept: Explainable Smart Reorder Engine
+                Explainable Smart Reorder Engine
               </h2>
               <p className="text-[11px] text-slate-400">
-                Thinqloud specification: AI/heuristic recommendations must be explainable, transparent, and non-dependent
+                Automated replenishment recommendations based on stock consumption thresholds, monthly run rates, and supplier lead times
               </p>
             </div>
           </div>
@@ -67,11 +79,10 @@ export const InventoryView: React.FC<{ onTriggerReorder: (productId: string, sug
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Spotlight item from PDF: Printer Paper */}
           {products
             .filter((p) => p.currentStock <= p.reorderLevel)
             .map((prod) => {
-              // Formula from PDF: Suggested purchase based on avg monthly usage + lead time safety buffer
+              // Suggested purchase based on avg monthly usage + lead time safety buffer
               const suggestedUnits = Math.round(prod.averageMonthlyUsage * 1.25);
 
               return (

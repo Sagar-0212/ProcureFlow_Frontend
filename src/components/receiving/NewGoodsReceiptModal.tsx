@@ -9,7 +9,7 @@ interface Props {
 }
 
 export const NewGoodsReceiptModal: React.FC<Props> = ({ isOpen, poId, onClose }) => {
-  const { purchaseOrders, processGoodsReceipt, currentUser, switchRole } = useProcurement();
+  const { purchaseOrders, processGoodsReceipt, currentUser } = useProcurement();
 
   const [selectedPOId, setSelectedPOId] = useState<string>(poId || '');
   const [carrier, setCarrier] = useState('FedEx Freight Direct');
@@ -87,7 +87,7 @@ export const NewGoodsReceiptModal: React.FC<Props> = ({ isOpen, poId, onClose })
     );
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -112,12 +112,13 @@ export const NewGoodsReceiptModal: React.FC<Props> = ({ isOpen, poId, onClose })
       }
     }
 
-    try {
-      if (currentUser.role !== 'PROCUREMENT' && currentUser.role !== 'ADMIN') {
-        switchRole('PROCUREMENT');
-      }
+    if (currentUser.role !== 'PROCUREMENT_OFFICER' && currentUser.role !== 'ADMIN') {
+      setError('Goods Receipts can only be processed by PROCUREMENT_OFFICER or ADMIN.');
+      return;
+    }
 
-      processGoodsReceipt({
+    try {
+      await processGoodsReceipt({
         purchaseOrderId: po.id,
         carrier,
         trackingNumber,
@@ -134,7 +135,7 @@ export const NewGoodsReceiptModal: React.FC<Props> = ({ isOpen, poId, onClose })
 
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Failed to record Goods Receipt Note.');
+      setError(err?.message || 'Failed to record Goods Receipt Note.');
     }
   };
 
@@ -183,7 +184,7 @@ export const NewGoodsReceiptModal: React.FC<Props> = ({ isOpen, poId, onClose })
               className="w-full text-xs bg-white border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900 font-medium"
             >
               {purchaseOrders
-                .filter((p) => p.status !== 'FULLY_RECEIVED' && p.status !== 'CLOSED')
+                .filter((p) => p.status !== 'FULLY_RECEIVED' && p.status !== 'COMPLETED' && p.status !== 'CANCELLED')
                 .map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.poNumber} — {p.supplierName} (${p.totalAmount.toLocaleString()}) [{p.status}]

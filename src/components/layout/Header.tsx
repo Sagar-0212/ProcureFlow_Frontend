@@ -1,36 +1,38 @@
 import React from 'react';
 import { useProcurement } from '../../context/ProcurementContext';
-import { UserRole } from '../../types';
+import { useAuth } from '../../context/AuthContext';
 import {
-  RotateCcw,
-  Sparkles,
   ShieldCheck,
-  Building2,
-  HelpCircle,
+  LogOut,
+  User as UserIcon,
 } from 'lucide-react';
 
-export const Header: React.FC = () => {
+interface HeaderProps {
+  onOpenLogin?: () => void;
+}
+
+export const Header: React.FC<HeaderProps> = ({ onOpenLogin }) => {
   const {
-    currentUser,
-    switchRole,
-    resetToInitialDemoState,
     activeTab,
     setActiveTab,
-    currentDemoStep,
-    setCurrentDemoStep,
   } = useProcurement();
 
-  const roleLabels: Record<UserRole, { title: string; badge: string; color: string }> = {
-    EMPLOYEE: { title: 'Alex Rivera', badge: 'Employee (Requester)', color: 'text-sky-700 bg-sky-50 border-sky-200' },
-    MANAGER: { title: 'Sarah Jenkins', badge: 'Department Manager', color: 'text-indigo-700 bg-indigo-50 border-indigo-200' },
-    PROCUREMENT: { title: 'Marcus Chen', badge: 'Procurement Specialist', color: 'text-amber-700 bg-amber-50 border-amber-200' },
-    FINANCE: { title: 'Elena Rostova', badge: 'Finance & Controller', color: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
-    ADMIN: { title: 'David Kim', badge: 'VP Operations / Admin', color: 'text-purple-700 bg-purple-50 border-purple-200' },
+  const { user: authUser, isAuthenticated, logout } = useAuth();
+
+  const roleLabels: Record<string, { title: string; badge: string; color: string }> = {
+    EMPLOYEE: { title: 'Employee', badge: 'EMPLOYEE', color: 'text-sky-700 bg-sky-50 border-sky-200' },
+    MANAGER: { title: 'Manager', badge: 'MANAGER', color: 'text-indigo-700 bg-indigo-50 border-indigo-200' },
+    PROCUREMENT_OFFICER: { title: 'Procurement Officer', badge: 'PROCUREMENT_OFFICER', color: 'text-amber-700 bg-amber-50 border-amber-200' },
+    FINANCE_OFFICER: { title: 'Finance Officer', badge: 'FINANCE_OFFICER', color: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+    ADMIN: { title: 'Administrator', badge: 'ADMIN', color: 'text-purple-700 bg-purple-50 border-purple-200' },
   };
+
+  const activeRole = authUser?.role || 'EMPLOYEE';
+  const currentRoleConfig = roleLabels[activeRole] || roleLabels['EMPLOYEE'];
 
   return (
     <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between z-20 shrink-0 sticky top-0">
-      {/* Zone 1: Brand Wordmark (Single text element according to Frontend Design Constitution) */}
+      {/* Zone 1: Brand Wordmark */}
       <div className="flex items-center gap-3">
         <button
           onClick={() => setActiveTab('dashboard')}
@@ -42,9 +44,6 @@ export const Header: React.FC = () => {
           <div>
             <div className="text-base font-bold text-slate-900 tracking-tight flex items-center gap-1.5">
               <span>ProcureFlow</span>
-              <span className="text-[10px] font-semibold tracking-wider uppercase px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
-                Thinqloud Project #9
-              </span>
             </div>
             <div className="text-[11px] text-slate-500 font-normal leading-none">
               Intelligent Purchase &amp; Procurement Management
@@ -53,59 +52,60 @@ export const Header: React.FC = () => {
         </button>
       </div>
 
-      {/* Zone 2: Middle quick action / context indicators */}
+      {/* Zone 2: Context indicator */}
       <div className="hidden lg:flex items-center gap-2">
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 rounded-lg border border-slate-200 text-xs text-slate-600">
-          <ShieldCheck className="w-4 h-4 text-emerald-600" />
-          <span>Active Role:</span>
-          <span className="font-semibold text-slate-900">{roleLabels[currentUser.role].badge}</span>
-          <span className="text-slate-300">|</span>
-          <span className="text-slate-500">{currentUser.departmentName}</span>
-        </div>
-
-        <button
-          onClick={() => setActiveTab('guide')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-            activeTab === 'guide'
-              ? 'bg-slate-900 text-white border-slate-900'
-              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-          }`}
-        >
-          <HelpCircle className="w-3.5 h-3.5" />
-          <span>Interview QA &amp; Architecture</span>
-        </button>
+        {isAuthenticated && authUser && (
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 rounded-lg border border-slate-200 text-xs text-slate-600">
+            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            <span>Authenticated Role:</span>
+            <span className="font-semibold text-slate-900">{currentRoleConfig.badge}</span>
+            {authUser.departmentName && (
+              <>
+                <span className="text-slate-300">|</span>
+                <span className="text-slate-500">{authUser.departmentName}</span>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Zone 3: Interactive Role Switcher & Reset Button */}
-      <div className="flex items-center gap-3">
-        {/* Role Switcher Selector */}
-        <div className="flex items-center gap-1.5 text-xs">
-          <label htmlFor="role-select" className="hidden sm:inline text-slate-500 font-medium">
-            Switch Persona:
-          </label>
-          <select
-            id="role-select"
-            value={currentUser.role}
-            onChange={(e) => switchRole(e.target.value as UserRole)}
-            className="text-xs font-semibold bg-slate-50 hover:bg-slate-100 text-slate-800 border border-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-slate-900 cursor-pointer"
-          >
-            <option value="EMPLOYEE">👤 Alex Rivera (Employee)</option>
-            <option value="MANAGER">👔 Sarah Jenkins (Manager)</option>
-            <option value="PROCUREMENT">📦 Marcus Chen (Procurement)</option>
-            <option value="FINANCE">💳 Elena Rostova (Finance)</option>
-            <option value="ADMIN">⚙️ David Kim (Admin / VP)</option>
-          </select>
-        </div>
+      {/* Zone 3: Authenticated User Controls */}
+      <div className="flex items-center gap-2.5">
+        {isAuthenticated && authUser ? (
+          <div className="flex items-center gap-2.5">
+            <div className="text-right hidden sm:block">
+              <div className="text-xs font-semibold text-slate-900 leading-tight">
+                {authUser.name}
+              </div>
+              <div className="text-[11px] text-slate-500 font-mono leading-tight truncate max-w-[150px]">
+                {authUser.email}
+              </div>
+            </div>
 
-        {/* Demo Reset button */}
-        <button
-          onClick={resetToInitialDemoState}
-          title="Reset demonstration state back to Thinqloud PDF initial case"
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors"
-        >
-          <RotateCcw className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Reset Demo</span>
-        </button>
+            <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-700 text-xs font-bold">
+              {authUser.name ? authUser.name.charAt(0).toUpperCase() : 'U'}
+            </div>
+
+            <button
+              onClick={logout}
+              title="Sign out from backend session"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:text-rose-600 bg-white hover:bg-rose-50 border border-slate-200 hover:border-rose-200 rounded-lg transition-colors"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Sign Out</span>
+            </button>
+          </div>
+        ) : (
+          onOpenLogin && (
+            <button
+              onClick={onOpenLogin}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg shadow-sm transition-colors"
+            >
+              <UserIcon className="w-3.5 h-3.5" />
+              <span>Sign In</span>
+            </button>
+          )
+        )}
       </div>
     </header>
   );

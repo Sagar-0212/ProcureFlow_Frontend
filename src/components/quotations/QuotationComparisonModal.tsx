@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Quotation, PurchaseRequest } from '../../types';
 import { useProcurement } from '../../context/ProcurementContext';
 import {
@@ -26,19 +26,27 @@ export const QuotationComparisonModal: React.FC<Props> = ({
   isOpen,
   onClose,
 }) => {
-  const { selectSupplierAndGeneratePO, setActiveTab, currentUser, switchRole } = useProcurement();
+  const { selectSupplierAndGeneratePO, setActiveTab, currentUser } = useProcurement();
+  const [error, setError] = useState<string | null>(null);
 
   if (!isOpen || !pr) return null;
 
   const relevantQuotes = quotations.filter((q) => q.purchaseRequestId === pr.id);
+  const isAuthorized = currentUser.role === 'PROCUREMENT_OFFICER' || currentUser.role === 'ADMIN';
 
-  const handleAwardSupplier = (quoteId: string) => {
-    if (currentUser.role !== 'PROCUREMENT' && currentUser.role !== 'ADMIN') {
-      switchRole('PROCUREMENT');
+  const handleAwardSupplier = async (quoteId: string) => {
+    if (!isAuthorized) {
+      setError('Issuing Purchase Orders requires PROCUREMENT_OFFICER or ADMIN role.');
+      return;
     }
-    selectSupplierAndGeneratePO(pr.id, quoteId);
-    onClose();
-    setActiveTab('orders');
+    setError(null);
+    try {
+      await selectSupplierAndGeneratePO(pr.id, quoteId);
+      onClose();
+      setActiveTab('orders');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to generate Purchase Order.');
+    }
   };
 
   return (
@@ -66,6 +74,13 @@ export const QuotationComparisonModal: React.FC<Props> = ({
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {error && (
+          <div className="mx-6 mt-4 p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-center justify-between">
+            <span>{error}</span>
+            <button onClick={() => setError(null)} className="text-rose-600 font-bold ml-2">✕</button>
+          </div>
+        )}
 
         <div className="p-6 space-y-6">
           {/* Requisition Context Summary */}
@@ -198,9 +213,9 @@ export const QuotationComparisonModal: React.FC<Props> = ({
             })}
           </div>
 
-          {/* Thinqloud Assessment Principle Callout */}
+          {/* Vendor Evaluation Analysis Callout */}
           <div className="bg-slate-100 border border-slate-200 rounded-lg p-4 text-xs text-slate-700 leading-relaxed">
-            <strong className="text-slate-900 font-semibold">Assessment Insight (Why TechSupply Pro was selected):</strong>{' '}
+            <strong className="text-slate-900 font-semibold">Evaluation Insight (Award Justification):</strong>{' '}
             Although Apex Global offered a slightly lower subtotal ($11,500), their delivery lead time is 8 business days with depot-only warranty.
             TechSupply Pro provides 3-day rapid delivery, 36 months on-site next business day warranty, and free pre-configured OS provisioning, making it
             the superior overall business decision.

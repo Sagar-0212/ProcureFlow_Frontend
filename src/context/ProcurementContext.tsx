@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import {
   User,
   UserRole,
@@ -6,7 +6,6 @@ import {
   Product,
   Supplier,
   PurchaseRequest,
-  PurchaseRequestItem,
   Quotation,
   PurchaseOrder,
   GoodsReceipt,
@@ -16,27 +15,30 @@ import {
   AuditLog,
   ApprovalRule,
   ThreeWayMatchResult,
+  PaymentMethod,
 } from '../types';
+import { useAuth } from './AuthContext';
 import {
-  INITIAL_USERS,
-  INITIAL_DEPARTMENTS,
-  INITIAL_APPROVAL_RULES,
-  INITIAL_PRODUCTS,
-  INITIAL_SUPPLIERS,
-  INITIAL_PURCHASE_REQUESTS,
-  INITIAL_QUOTATIONS,
-  INITIAL_PURCHASE_ORDERS,
-  INITIAL_GOODS_RECEIPTS,
-  INITIAL_INVOICES,
-  INITIAL_PAYMENTS,
-  INITIAL_INVENTORY_TRANSACTIONS,
-  INITIAL_AUDIT_LOGS,
-} from '../mock/initialData';
+  purchaseRequestService,
+  departmentService,
+  productService,
+  supplierService,
+  quotationService,
+  purchaseOrderService,
+  goodsReceiptService,
+  invoiceService,
+  paymentService,
+  inventoryService,
+  approvalService,
+  auditLogService,
+  dashboardService,
+  reportsService,
+} from '../services/apiServices';
+import { DashboardSummaryDto, ReportsSummaryDto } from '../types/backend';
+import { ApiError } from '../services/apiClient';
 
 interface ProcurementContextType {
   currentUser: User;
-  setCurrentUser: (user: User) => void;
-  switchRole: (role: UserRole) => void;
   users: User[];
   departments: Department[];
   approvalRules: ApprovalRule[];
@@ -50,67 +52,79 @@ interface ProcurementContextType {
   payments: Payment[];
   inventoryTransactions: InventoryTransaction[];
   auditLogs: AuditLog[];
+  dashboardSummary: DashboardSummaryDto | null;
+  reportsSummary: ReportsSummaryDto | null;
   
-  // Navigation State
+  // Navigation & State
   activeTab: string;
   setActiveTab: (tab: string) => void;
+  isLoading: boolean;
+  apiError: string | null;
+  moduleErrors: Record<string, string | null>;
+  refreshAllData: () => Promise<void>;
+  fetchModuleData: (moduleName: string) => Promise<void>;
 
-  // Business Actions
+  // Business Actions (Strict Backend Mutations)
   createPurchaseRequest: (data: {
-    departmentId: string;
+    departmentId: string | number;
     reason: string;
-    items: { productId: string; quantity: number; estimatedUnitPrice: number }[];
-  }) => PurchaseRequest;
+    items: { productId: string | number; quantity: number; estimatedUnitPrice: number }[];
+  }) => Promise<PurchaseRequest>;
   
-  approvePurchaseRequest: (prId: string, comments: string) => void;
-  rejectPurchaseRequest: (prId: string, comments: string) => void;
-  cancelPurchaseRequest: (prId: string) => void;
+  approvePurchaseRequest: (prId: string | number, comments: string) => Promise<void>;
+  rejectPurchaseRequest: (prId: string | number, comments: string) => Promise<void>;
+  cancelPurchaseRequest: (prId: string | number) => Promise<void>;
   
   createQuotation: (data: {
-    purchaseRequestId: string;
-    supplierId: string;
+    purchaseRequestId: string | number;
+    supplierId: string | number;
     deliveryDays: number;
     warrantyPeriod: string;
     paymentTerms: string;
     notes?: string;
-    items: { productId: string; quantity: number; unitPrice: number; discount: number; taxPercent: number }[];
-  }) => Quotation;
+    items: { productId: string | number; quantity: number; unitPrice: number; discount: number; taxPercent: number }[];
+  }) => Promise<Quotation>;
 
-  selectSupplierAndGeneratePO: (prId: string, quotationId: string) => PurchaseOrder;
+  selectSupplierAndGeneratePO: (prId: string | number, quotationId: string | number) => Promise<PurchaseOrder>;
 
   processGoodsReceipt: (data: {
-    purchaseOrderId: string;
+    purchaseOrderId: string | number;
     carrier: string;
     trackingNumber: string;
     notes: string;
     items: {
-      poItemId: string;
-      productId: string;
+      poItemId?: string | number;
+      productId: string | number;
       receivedQuantity: number;
       acceptedQuantity: number;
       rejectedQuantity: number;
       rejectionReason?: string;
     }[];
-  }) => GoodsReceipt;
+  }) => Promise<GoodsReceipt>;
 
   createInvoice: (data: {
-    purchaseOrderId: string;
+    purchaseOrderId: string | number;
     invoiceNumber: string;
     invoiceDate: string;
     dueDate: string;
-    items: { productId: string; quantity: number; unitPrice: number; tax: number }[];
-  }) => Invoice;
+    items: { productId: string | number; quantity: number; unitPrice: number; tax?: number }[];
+  }) => Promise<Invoice>;
 
-  evaluateThreeWayMatch: (invoiceId: string) => ThreeWayMatchResult;
+  evaluateThreeWayMatch: (invoiceId: string | number) => ThreeWayMatchResult;
 
   processPayment: (data: {
-    invoiceId: string;
-    paymentMethod: 'NEFT_RTGS' | 'BANK_TRANSFER' | 'CORPORATE_CARD' | 'CHEQUE';
+    invoiceId: string | number;
+    paymentMethod: PaymentMethod;
     referenceNumber: string;
-  }) => Payment;
+  }) => Promise<Payment>;
 
-  resolveMissingDeliveryShortcut: (poId: string) => void;
-  resetToInitialDemoState: () => void;
+  adjustStock: (data: {
+    productId: string | number;
+    quantity: number;
+    type: 'RECEIPT' | 'ADJUSTMENT' | 'RETURN';
+    remarks?: string;
+  }) => Promise<InventoryTransaction>;
+
   loadDemoStep: (stepNumber: number) => void;
   currentDemoStep: number;
   setCurrentDemoStep: (step: number) => void;
@@ -118,646 +132,725 @@ interface ProcurementContextType {
 
 const ProcurementContext = createContext<ProcurementContextType | undefined>(undefined);
 
-const STORAGE_KEY_PREFIX = 'procureflow_v1_';
-
 export const ProcurementProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Local storage helpers
-  const loadStored = <T,>(key: string, fallback: T): T => {
-    try {
-      const data = localStorage.getItem(STORAGE_KEY_PREFIX + key);
-      return data ? JSON.parse(data) : fallback;
-    } catch {
-      return fallback;
-    }
-  };
+  const { user: authUser } = useAuth();
 
-  const [users] = useState<User[]>(INITIAL_USERS);
-  const [currentUser, setCurrentUser] = useState<User>(() => {
-    return loadStored('currentUser', INITIAL_USERS[0]);
-  });
-  const [departments] = useState<Department[]>(INITIAL_DEPARTMENTS);
-  const [approvalRules] = useState<ApprovalRule[]>(INITIAL_APPROVAL_RULES);
-  const [products, setProducts] = useState<Product[]>(() => loadStored('products', INITIAL_PRODUCTS));
-  const [suppliers] = useState<Supplier[]>(() => loadStored('suppliers', INITIAL_SUPPLIERS));
-  const [purchaseRequests, setPurchaseRequests] = useState<PurchaseRequest[]>(() =>
-    loadStored('purchaseRequests', INITIAL_PURCHASE_REQUESTS)
-  );
-  const [quotations, setQuotations] = useState<Quotation[]>(() =>
-    loadStored('quotations', INITIAL_QUOTATIONS)
-  );
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(() =>
-    loadStored('purchaseOrders', INITIAL_PURCHASE_ORDERS)
-  );
-  const [goodsReceipts, setGoodsReceipts] = useState<GoodsReceipt[]>(() =>
-    loadStored('goodsReceipts', INITIAL_GOODS_RECEIPTS)
-  );
-  const [invoices, setInvoices] = useState<Invoice[]>(() =>
-    loadStored('invoices', INITIAL_INVOICES)
-  );
-  const [payments, setPayments] = useState<Payment[]>(() =>
-    loadStored('payments', INITIAL_PAYMENTS)
-  );
-  const [inventoryTransactions, setInventoryTransactions] = useState<InventoryTransaction[]>(() =>
-    loadStored('inventoryTransactions', INITIAL_INVENTORY_TRANSACTIONS)
-  );
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() =>
-    loadStored('auditLogs', INITIAL_AUDIT_LOGS)
-  );
+  // Role and identity strictly derived from authenticated backend session
+  const currentUser: User = authUser
+    ? {
+        id: String(authUser.id),
+        name: authUser.name,
+        email: authUser.email,
+        role: authUser.role as UserRole,
+        departmentId: String(authUser.departmentId || '1'),
+        departmentName: authUser.departmentName || 'General',
+      }
+    : {
+        id: '0',
+        name: 'Unauthenticated User',
+        email: '',
+        role: 'EMPLOYEE',
+        departmentId: '1',
+        departmentName: 'General',
+      };
+
+  // Real backend collections - NO in-memory mock fallback
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [approvalRules, setApprovalRules] = useState<ApprovalRule[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [purchaseRequests, setPurchaseRequests] = useState<PurchaseRequest[]>([]);
+  const [quotations, setQuotations] = useState<Quotation[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [goodsReceipts, setGoodsReceipts] = useState<GoodsReceipt[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [inventoryTransactions, setInventoryTransactions] = useState<InventoryTransaction[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummaryDto | null>(null);
+  const [reportsSummary, setReportsSummary] = useState<ReportsSummaryDto | null>(null);
 
   const [activeTab, setActiveTab] = useState<string>('dashboard');
-  const [currentDemoStep, setCurrentDemoStep] = useState<number>(5); // Default to Step 5 (Mismatch state from PDF)
+  const [currentDemoStep, setCurrentDemoStep] = useState<number>(1);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [moduleErrors, setModuleErrors] = useState<Record<string, string | null>>({});
 
-  // Save changes to localStorage
-  useEffect(() => {
+  // Fetch real data from all backend endpoints
+  const refreshAllData = useCallback(async () => {
+    setIsLoading(true);
+    setApiError(null);
+    const newErrors: Record<string, string | null> = {};
+
     try {
-      localStorage.setItem(STORAGE_KEY_PREFIX + 'currentUser', JSON.stringify(currentUser));
-      localStorage.setItem(STORAGE_KEY_PREFIX + 'products', JSON.stringify(products));
-      localStorage.setItem(STORAGE_KEY_PREFIX + 'purchaseRequests', JSON.stringify(purchaseRequests));
-      localStorage.setItem(STORAGE_KEY_PREFIX + 'quotations', JSON.stringify(quotations));
-      localStorage.setItem(STORAGE_KEY_PREFIX + 'purchaseOrders', JSON.stringify(purchaseOrders));
-      localStorage.setItem(STORAGE_KEY_PREFIX + 'goodsReceipts', JSON.stringify(goodsReceipts));
-      localStorage.setItem(STORAGE_KEY_PREFIX + 'invoices', JSON.stringify(invoices));
-      localStorage.setItem(STORAGE_KEY_PREFIX + 'payments', JSON.stringify(payments));
-      localStorage.setItem(STORAGE_KEY_PREFIX + 'inventoryTransactions', JSON.stringify(inventoryTransactions));
-      localStorage.setItem(STORAGE_KEY_PREFIX + 'auditLogs', JSON.stringify(auditLogs));
-    } catch {
-      // storage limit ignore
+      const results = await Promise.allSettled([
+        departmentService.getAll(),
+        productService.getAll(),
+        supplierService.getAll(),
+        purchaseRequestService.getAll(),
+        quotationService.getAll(),
+        purchaseOrderService.getAll(),
+        goodsReceiptService.getAll(),
+        invoiceService.getAll(),
+        paymentService.getAll(),
+        inventoryService.getTransactions(),
+        approvalService.getRules(),
+        dashboardService.getSummary(),
+        reportsService.getSummary(),
+        auditLogService.getAll(),
+      ]);
+
+      const [
+        deptRes,
+        prodRes,
+        supRes,
+        prRes,
+        quoteRes,
+        poRes,
+        grRes,
+        invRes,
+        payRes,
+        transRes,
+        rulesRes,
+        dashRes,
+        repRes,
+        auditRes,
+      ] = results;
+
+      if (deptRes.status === 'fulfilled' && Array.isArray(deptRes.value)) {
+        setDepartments(deptRes.value.map((d) => ({
+          ...d,
+          id: String(d.id),
+          budget: d.budget ?? 0,
+          managerId: d.managerId ? String(d.managerId) : undefined,
+        })));
+      } else if (deptRes.status === 'rejected') {
+        newErrors['departments'] = (deptRes.reason as ApiError)?.message || 'Failed to load departments';
+      }
+
+      if (prodRes.status === 'fulfilled' && Array.isArray(prodRes.value)) {
+        setProducts(
+          prodRes.value.map((p) => ({
+            ...p,
+            id: String(p.id),
+            category: p.category || p.categoryName || 'General',
+            defaultPrice: p.defaultPrice || p.price || 0,
+            leadTimeDays: p.leadTimeDays || 3,
+            averageMonthlyUsage: p.averageMonthlyUsage || 10,
+          }))
+        );
+      } else if (prodRes.status === 'rejected') {
+        newErrors['products'] = (prodRes.reason as ApiError)?.message || 'Failed to load products';
+      }
+
+      if (supRes.status === 'fulfilled' && Array.isArray(supRes.value)) {
+        setSuppliers(
+          supRes.value.map((s) => ({
+            ...s,
+            id: String(s.id),
+            rating: s.rating || 4.5,
+            isActive: s.isActive !== false,
+          }))
+        );
+      } else if (supRes.status === 'rejected') {
+        newErrors['suppliers'] = (supRes.reason as ApiError)?.message || 'Failed to load suppliers';
+      }
+
+      if (prRes.status === 'fulfilled' && Array.isArray(prRes.value)) {
+        setPurchaseRequests(
+          prRes.value.map((pr: any) => ({
+            id: String(pr.id),
+            requestNumber: pr.requestNumber || `PR-${pr.id}`,
+            requestedBy: String(pr.requestedBy),
+            requesterName: pr.requesterName || 'Alex Rivera',
+            departmentId: String(pr.departmentId),
+            departmentName: pr.departmentName || 'General',
+            reason: pr.reason,
+            estimatedTotal: pr.estimatedTotal || 0,
+            status: pr.status,
+            submittedAt: pr.submittedAt || pr.createdAt || new Date().toISOString(),
+            createdAt: pr.createdAt || new Date().toISOString(),
+            items: (pr.items || []).map((it: any) => ({
+              id: String(it.id || `PRI-${Math.random()}`),
+              productId: String(it.productId),
+              productName: it.productName || 'Product Item',
+              sku: it.sku || 'SKU-GEN',
+              quantity: it.quantity,
+              estimatedUnitPrice: it.estimatedUnitPrice,
+              estimatedTotal: it.estimatedTotal || it.quantity * it.estimatedUnitPrice,
+            })),
+            approvalHistory: (pr.approvalHistory || []).map((ah: any) => ({
+              id: String(ah.id || `APP-${Math.random()}`),
+              purchaseRequestId: String(pr.id),
+              approverId: String(ah.approverId || ''),
+              approverName: ah.approverName || 'Approver',
+              action: ah.action,
+              comments: ah.comments || '',
+              approvedAt: ah.approvedAt || new Date().toISOString(),
+            })),
+          }))
+        );
+      } else if (prRes.status === 'rejected') {
+        newErrors['purchaseRequests'] = (prRes.reason as ApiError)?.message || 'Failed to load purchase requests';
+      }
+
+      if (quoteRes.status === 'fulfilled' && Array.isArray(quoteRes.value)) {
+        setQuotations(
+          quoteRes.value.map((q: any) => ({
+            ...q,
+            id: String(q.id),
+            purchaseRequestId: String(q.purchaseRequestId),
+            supplierId: String(q.supplierId),
+            items: (q.items || []).map((it: any) => ({
+              ...it,
+              id: String(it.id || `QTI-${Math.random()}`),
+              productId: String(it.productId),
+            })),
+          }))
+        );
+      } else if (quoteRes.status === 'rejected') {
+        newErrors['quotations'] = (quoteRes.reason as ApiError)?.message || 'Failed to load quotations';
+      }
+
+      if (poRes.status === 'fulfilled' && Array.isArray(poRes.value)) {
+        setPurchaseOrders(
+          poRes.value.map((po: any) => ({
+            ...po,
+            id: String(po.id),
+            purchaseRequestId: String(po.purchaseRequestId),
+            supplierId: String(po.supplierId),
+            quotationId: po.quotationId ? String(po.quotationId) : undefined,
+            createdBy: String(po.createdBy || ''),
+            creatorName: po.creatorName || 'Procurement Officer',
+            items: (po.items || []).map((it: any) => ({
+              ...it,
+              id: String(it.id || `POI-${Math.random()}`),
+              productId: String(it.productId),
+            })),
+          }))
+        );
+      } else if (poRes.status === 'rejected') {
+        newErrors['purchaseOrders'] = (poRes.reason as ApiError)?.message || 'Failed to load purchase orders';
+      }
+
+      if (grRes.status === 'fulfilled' && Array.isArray(grRes.value)) {
+        setGoodsReceipts(
+          grRes.value.map((gr: any) => ({
+            ...gr,
+            id: String(gr.id),
+            purchaseOrderId: String(gr.purchaseOrderId),
+            items: (gr.items || []).map((it: any) => ({
+              ...it,
+              id: String(it.id || `GRI-${Math.random()}`),
+              poItemId: String(it.poItemId || ''),
+              productId: String(it.productId),
+            })),
+          }))
+        );
+      } else if (grRes.status === 'rejected') {
+        newErrors['goodsReceipts'] = (grRes.reason as ApiError)?.message || 'Failed to load goods receipts';
+      }
+
+      if (invRes.status === 'fulfilled' && Array.isArray(invRes.value)) {
+        setInvoices(
+          invRes.value.map((inv: any) => ({
+            ...inv,
+            id: String(inv.id),
+            supplierId: String(inv.supplierId),
+            purchaseOrderId: String(inv.purchaseOrderId),
+            items: (inv.items || []).map((it: any) => ({
+              ...it,
+              id: String(it.id || `INVI-${Math.random()}`),
+              productId: String(it.productId),
+            })),
+          }))
+        );
+      } else if (invRes.status === 'rejected') {
+        newErrors['invoices'] = (invRes.reason as ApiError)?.message || 'Failed to load invoices';
+      }
+
+      if (payRes.status === 'fulfilled' && Array.isArray(payRes.value)) {
+        setPayments(
+          payRes.value.map((p: any) => ({
+            ...p,
+            id: String(p.id),
+            invoiceId: String(p.invoiceId),
+          }))
+        );
+      } else if (payRes.status === 'rejected') {
+        newErrors['payments'] = (payRes.reason as ApiError)?.message || 'Failed to load payments';
+      }
+
+      if (transRes.status === 'fulfilled' && Array.isArray(transRes.value)) {
+        setInventoryTransactions(
+          transRes.value.map((t: any) => ({
+            ...t,
+            id: String(t.id),
+            productId: String(t.productId),
+          }))
+        );
+      } else if (transRes.status === 'rejected') {
+        newErrors['inventory'] = (transRes.reason as ApiError)?.message || 'Failed to load inventory transactions';
+      }
+
+      if (rulesRes.status === 'fulfilled' && Array.isArray(rulesRes.value)) {
+        setApprovalRules(rulesRes.value.map((r) => ({ ...r, id: String(r.id), requiredRole: r.requiredRole as UserRole, description: r.description || '' })));
+      }
+
+      if (dashRes.status === 'fulfilled' && dashRes.value) {
+        setDashboardSummary(dashRes.value);
+      } else if (dashRes.status === 'rejected') {
+        newErrors['dashboard'] = (dashRes.reason as ApiError)?.message || 'Failed to load dashboard summary';
+      }
+
+      if (repRes.status === 'fulfilled' && repRes.value) {
+        setReportsSummary(repRes.value);
+      }
+
+      if (auditRes.status === 'fulfilled' && Array.isArray(auditRes.value)) {
+        setAuditLogs(
+          auditRes.value.map((a: any) => ({
+            ...a,
+            id: String(a.id),
+            userRole: a.userRole as UserRole,
+            entityId: String(a.entityId || ''),
+          }))
+        );
+      } else if (auditRes.status === 'rejected') {
+        newErrors['audit'] = (auditRes.reason as ApiError)?.message || 'Failed to load audit logs';
+      }
+
+      // Check if backend was completely unreachable
+      const rejectedCount = results.filter((r) => r.status === 'rejected').length;
+      if (rejectedCount === results.length) {
+        const firstError = (results[0] as PromiseRejectedResult).reason as ApiError;
+        setApiError(
+          firstError?.message ||
+          'Unable to connect to Spring Boot backend at http://localhost:8080. Please ensure the backend server is running.'
+        );
+      }
+
+      setModuleErrors(newErrors);
+    } catch (err: any) {
+      setApiError(err?.message || 'Error communicating with backend API.');
+    } finally {
+      setIsLoading(false);
     }
-  }, [
-    currentUser,
-    products,
-    purchaseRequests,
-    quotations,
-    purchaseOrders,
-    goodsReceipts,
-    invoices,
-    payments,
-    inventoryTransactions,
-    auditLogs,
-  ]);
+  }, []);
 
-  const switchRole = (role: UserRole) => {
-    const targetUser = users.find((u) => u.role === role) || users[0];
-    setCurrentUser(targetUser);
+  const fetchModuleData = async (moduleName: string) => {
+    switch (moduleName) {
+      case 'purchaseRequests':
+        try {
+          const data = await purchaseRequestService.getAll();
+          setPurchaseRequests(data.map((pr: any) => ({ ...pr, id: String(pr.id) })));
+          setModuleErrors((prev) => ({ ...prev, purchaseRequests: null }));
+        } catch (err: any) {
+          setModuleErrors((prev) => ({ ...prev, purchaseRequests: err?.message || 'Failed to load purchase requests' }));
+        }
+        break;
+      case 'purchaseOrders':
+        try {
+          const data = await purchaseOrderService.getAll();
+          setPurchaseOrders(data.map((po: any) => ({ ...po, id: String(po.id) })));
+          setModuleErrors((prev) => ({ ...prev, purchaseOrders: null }));
+        } catch (err: any) {
+          setModuleErrors((prev) => ({ ...prev, purchaseOrders: err?.message || 'Failed to load purchase orders' }));
+        }
+        break;
+      case 'invoices':
+        try {
+          const data = await invoiceService.getAll();
+          setInvoices(data.map((inv: any) => ({ ...inv, id: String(inv.id) })));
+          setModuleErrors((prev) => ({ ...prev, invoices: null }));
+        } catch (err: any) {
+          setModuleErrors((prev) => ({ ...prev, invoices: err?.message || 'Failed to load invoices' }));
+        }
+        break;
+      default:
+        await refreshAllData();
+        break;
+    }
   };
 
-  const addAuditLog = (
-    action: string,
-    entityType: AuditLog['entityType'],
-    entityId: string,
-    entityReference: string,
-    description: string
-  ) => {
-    const newLog: AuditLog = {
-      id: `AUD-${Date.now().toString().slice(-4)}`,
-      timestamp: new Date().toISOString(),
-      userId: currentUser.id,
-      userName: currentUser.name,
-      userRole: currentUser.role,
-      action,
-      entityType,
-      entityId,
-      entityReference,
-      description,
-    };
-    setAuditLogs((prev) => [newLog, ...prev]);
-  };
+  useEffect(() => {
+    refreshAllData();
+  }, [refreshAllData]);
 
-  // 1. Create PR
-  const createPurchaseRequest = (data: {
-    departmentId: string;
+  // 1. Create Purchase Request (Strict Backend Mutation)
+  const createPurchaseRequest = async (data: {
+    departmentId: string | number;
     reason: string;
-    items: { productId: string; quantity: number; estimatedUnitPrice: number }[];
-  }): PurchaseRequest => {
+    items: { productId: string | number; quantity: number; estimatedUnitPrice: number }[];
+  }): Promise<PurchaseRequest> => {
     if (data.items.length === 0) {
       throw new Error('A purchase request must contain at least one item.');
     }
 
-    const dept = departments.find((d) => d.id === data.departmentId) || departments[0];
-    const reqNum = `PR-${1000 + purchaseRequests.length + 1}`;
-    
-    let total = 0;
-    const prItems: PurchaseRequestItem[] = data.items.map((item, index) => {
-      const prod = products.find((p) => p.id === item.productId);
-      const sub = item.quantity * item.estimatedUnitPrice;
-      total += sub;
-      return {
-        id: `PRI-${Date.now()}-${index}`,
-        productId: item.productId,
-        productName: prod ? prod.name : 'Unknown Product',
-        sku: prod ? prod.sku : 'N/A',
-        quantity: item.quantity,
-        estimatedUnitPrice: item.estimatedUnitPrice,
-        estimatedTotal: sub,
-      };
-    });
+    // Call real backend endpoint POST /api/purchase-requests
+    const backendDto = await purchaseRequestService.create(data);
+    if (!backendDto || !backendDto.id) {
+      throw new Error('Backend failed to return created Purchase Request.');
+    }
 
-    const newPR: PurchaseRequest = {
-      id: reqNum,
-      requestNumber: reqNum,
-      requestedBy: currentUser.id,
-      requesterName: currentUser.name,
-      departmentId: dept.id,
-      departmentName: dept.name,
-      reason: data.reason,
-      estimatedTotal: total,
-      status: 'PENDING_APPROVAL',
-      submittedAt: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      items: prItems,
+    const formattedPR: PurchaseRequest = {
+      id: String(backendDto.id),
+      requestNumber: backendDto.requestNumber || `PR-${backendDto.id}`,
+      requestedBy: String(backendDto.requestedBy),
+      requesterName: backendDto.requesterName || currentUser.name,
+      departmentId: String(backendDto.departmentId),
+      departmentName: backendDto.departmentName || currentUser.departmentName,
+      reason: backendDto.reason,
+      estimatedTotal: backendDto.estimatedTotal,
+      status: backendDto.status,
+      submittedAt: backendDto.submittedAt || new Date().toISOString(),
+      createdAt: backendDto.createdAt || new Date().toISOString(),
+      items: (backendDto.items || []).map((it) => ({
+        id: String(it.id || `PRI-${Math.random()}`),
+        productId: String(it.productId),
+        productName: it.productName || 'Product Item',
+        sku: it.sku || 'SKU-GEN',
+        quantity: it.quantity,
+        estimatedUnitPrice: it.estimatedUnitPrice,
+        estimatedTotal: it.estimatedTotal || it.quantity * it.estimatedUnitPrice,
+      })),
       approvalHistory: [],
     };
 
-    setPurchaseRequests((prev) => [newPR, ...prev]);
-    addAuditLog(
-      'CREATE_PURCHASE_REQUEST',
-      'PURCHASE_REQUEST',
-      reqNum,
-      reqNum,
-      `Submitted Purchase Request ${reqNum} for ${prItems.length} items total $${total.toLocaleString()}: "${data.reason}"`
-    );
-
-    return newPR;
+    setPurchaseRequests((prev) => [formattedPR, ...prev]);
+    return formattedPR;
   };
 
-  // 2. Approve PR
-  const approvePurchaseRequest = (prId: string, comments: string) => {
-    const pr = purchaseRequests.find((p) => p.id === prId);
-    if (!pr) throw new Error('Purchase request not found');
-    if (pr.status === 'REJECTED' || pr.status === 'CANCELLED') {
-      throw new Error('A request cannot be approved if it is already rejected or cancelled.');
-    }
-
-    const approvalAction = {
-      id: `APP-${Date.now().toString().slice(-4)}`,
-      purchaseRequestId: prId,
-      approverId: currentUser.id,
-      approverName: currentUser.name,
-      action: 'APPROVED' as const,
-      comments: comments || 'Approved according to departmental procurement policy.',
-      approvedAt: new Date().toISOString(),
-    };
-
+  // 2. Approve PR (Strict Backend Mutation)
+  const approvePurchaseRequest = async (prId: string | number, comments: string) => {
+    const updatedDto = await approvalService.approve(prId, comments);
     setPurchaseRequests((prev) =>
       prev.map((p) =>
-        p.id === prId
+        p.id === String(prId)
           ? {
               ...p,
-              status: 'APPROVED',
-              approvalHistory: [...p.approvalHistory, approvalAction],
+              status: (updatedDto?.status as any) || 'APPROVED',
+              approvalHistory: [
+                ...(p.approvalHistory || []),
+                {
+                  id: `APP-${Date.now()}`,
+                  purchaseRequestId: String(prId),
+                  approverId: currentUser.id,
+                  approverName: currentUser.name,
+                  action: 'APPROVED' as const,
+                  comments,
+                  approvedAt: new Date().toISOString(),
+                },
+              ],
             }
           : p
       )
     );
-
-    addAuditLog(
-      'APPROVE_PURCHASE_REQUEST',
-      'APPROVAL',
-      prId,
-      pr.requestNumber,
-      `Approved ${pr.requestNumber} ($${pr.estimatedTotal.toLocaleString()}). Comment: "${approvalAction.comments}"`
-    );
   };
 
-  // 3. Reject PR
-  const rejectPurchaseRequest = (prId: string, comments: string) => {
-    const pr = purchaseRequests.find((p) => p.id === prId);
-    if (!pr) throw new Error('Purchase request not found');
-
-    const rejectAction = {
-      id: `APP-${Date.now().toString().slice(-4)}`,
-      purchaseRequestId: prId,
-      approverId: currentUser.id,
-      approverName: currentUser.name,
-      action: 'REJECTED' as const,
-      comments: comments || 'Rejected by approver.',
-      approvedAt: new Date().toISOString(),
-    };
-
+  // 3. Reject PR (Strict Backend Mutation)
+  const rejectPurchaseRequest = async (prId: string | number, comments: string) => {
+    const updatedDto = await approvalService.reject(prId, comments);
     setPurchaseRequests((prev) =>
       prev.map((p) =>
-        p.id === prId
+        p.id === String(prId)
           ? {
               ...p,
-              status: 'REJECTED',
-              approvalHistory: [...p.approvalHistory, rejectAction],
+              status: (updatedDto?.status as any) || 'REJECTED',
+              approvalHistory: [
+                ...(p.approvalHistory || []),
+                {
+                  id: `APP-${Date.now()}`,
+                  purchaseRequestId: String(prId),
+                  approverId: currentUser.id,
+                  approverName: currentUser.name,
+                  action: 'REJECTED' as const,
+                  comments,
+                  approvedAt: new Date().toISOString(),
+                },
+              ],
             }
           : p
       )
-    );
-
-    addAuditLog(
-      'REJECT_PURCHASE_REQUEST',
-      'APPROVAL',
-      prId,
-      pr.requestNumber,
-      `Rejected ${pr.requestNumber}. Reason: "${rejectAction.comments}"`
     );
   };
 
   // 4. Cancel PR
-  const cancelPurchaseRequest = (prId: string) => {
-    const pr = purchaseRequests.find((p) => p.id === prId);
-    if (!pr) throw new Error('Purchase request not found');
-    if (pr.status !== 'DRAFT' && pr.status !== 'PENDING_APPROVAL') {
-      throw new Error('Requests can only be cancelled while in draft or pending approval state.');
-    }
-
+  const cancelPurchaseRequest = async (prId: string | number) => {
+    await purchaseRequestService.cancel(prId);
     setPurchaseRequests((prev) =>
-      prev.map((p) => (p.id === prId ? { ...p, status: 'CANCELLED' } : p))
-    );
-
-    addAuditLog(
-      'CANCEL_PURCHASE_REQUEST',
-      'PURCHASE_REQUEST',
-      prId,
-      pr.requestNumber,
-      `Cancelled ${pr.requestNumber} by requester ${currentUser.name}.`
+      prev.map((p) => (p.id === String(prId) ? { ...p, status: 'CANCELLED' } : p))
     );
   };
 
-  // 5. Create Quotation
-  const createQuotation = (data: {
-    purchaseRequestId: string;
-    supplierId: string;
+  // 5. Create Quotation (Strict Backend Mutation)
+  const createQuotation = async (data: {
+    purchaseRequestId: string | number;
+    supplierId: string | number;
     deliveryDays: number;
     warrantyPeriod: string;
     paymentTerms: string;
     notes?: string;
-    items: { productId: string; quantity: number; unitPrice: number; discount: number; taxPercent: number }[];
-  }): Quotation => {
-    const supp = suppliers.find((s) => s.id === data.supplierId) || suppliers[0];
-    const qtNum = `QT-${new Date().getFullYear()}-${String(quotations.length + 1).padStart(3, '0')}`;
-    
-    let subtotal = 0;
-    let totalDiscount = 0;
-    let totalTax = 0;
-
-    const qItems = data.items.map((it, idx) => {
-      const prod = products.find((p) => p.id === it.productId);
-      const gross = it.quantity * it.unitPrice;
-      const disc = (gross * (it.discount || 0)) / 100;
-      const net = gross - disc;
-      const tax = (net * (it.taxPercent || 0)) / 100;
-      const lineTotal = net + tax;
-
-      subtotal += net;
-      totalDiscount += disc;
-      totalTax += tax;
-
-      return {
-        id: `QTI-${Date.now()}-${idx}`,
-        productId: it.productId,
-        productName: prod ? prod.name : 'Product',
-        quantity: it.quantity,
-        unitPrice: it.unitPrice,
-        taxPercent: it.taxPercent,
-        discount: disc,
-        total: lineTotal,
-      };
-    });
-
-    const newQuotation: Quotation = {
-      id: `QT-${Date.now().toString().slice(-4)}`,
-      quotationNumber: qtNum,
-      purchaseRequestId: data.purchaseRequestId,
-      supplierId: supp.id,
-      supplierName: supp.companyName,
-      quotationDate: new Date().toISOString().split('T')[0],
-      validUntil: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
-      subtotal,
-      tax: totalTax,
-      discount: totalDiscount,
-      totalAmount: subtotal + totalTax,
-      deliveryDays: data.deliveryDays,
-      warrantyPeriod: data.warrantyPeriod,
-      paymentTerms: data.paymentTerms,
-      status: 'PENDING',
-      items: qItems,
-      notes: data.notes,
+    items: { productId: string | number; quantity: number; unitPrice: number; discount: number; taxPercent: number }[];
+  }): Promise<Quotation> => {
+    const quotePayload = {
+      ...data,
+      items: data.items.map((it) => ({
+        ...it,
+        total: it.unitPrice * it.quantity * (1 - (it.discount || 0) / 100),
+      })),
+    };
+    const createdDto = await quotationService.create(quotePayload);
+    const newQuote: Quotation = {
+      ...createdDto,
+      id: String(createdDto.id),
+      purchaseRequestId: String(createdDto.purchaseRequestId),
+      supplierId: String(createdDto.supplierId),
+      supplierName: createdDto.supplierName || suppliers.find((s) => s.id === String(createdDto.supplierId))?.companyName || 'Supplier',
+      items: (createdDto.items || []).map((it) => ({
+        ...it,
+        id: String(it.id || `QTI-${Math.random()}`),
+        productId: String(it.productId),
+        productName: it.productName || products.find((p) => p.id === String(it.productId))?.name || 'Product',
+        discount: it.discount || 0,
+        taxPercent: it.taxPercent || 0,
+      })),
     };
 
-    setQuotations((prev) => [newQuotation, ...prev]);
-
-    addAuditLog(
-      'RECORD_SUPPLIER_QUOTATION',
-      'QUOTATION',
-      newQuotation.id,
-      qtNum,
-      `Recorded quote ${qtNum} from ${supp.companyName} for PR ${data.purchaseRequestId} ($${newQuotation.totalAmount.toLocaleString()}).`
-    );
-
-    return newQuotation;
+    setQuotations((prev) => [newQuote, ...prev]);
+    return newQuote;
   };
 
-  // 6. Select Supplier & Generate PO
-  const selectSupplierAndGeneratePO = (prId: string, quotationId: string): PurchaseOrder => {
-    const pr = purchaseRequests.find((p) => p.id === prId);
-    const quote = quotations.find((q) => q.id === quotationId);
-    if (!pr || !quote) throw new Error('PR or Quotation not found');
+  // 6. Select Supplier & Generate Purchase Order (Strict Backend Mutation)
+  const selectSupplierAndGeneratePO = async (
+    prId: string | number,
+    quotationId: string | number
+  ): Promise<PurchaseOrder> => {
+    const poDto = await quotationService.selectSupplier(prId, quotationId);
+    const formattedPO: PurchaseOrder = {
+      ...poDto,
+      id: String(poDto.id),
+      poNumber: poDto.poNumber || `PO-${poDto.id}`,
+      purchaseRequestId: String(poDto.purchaseRequestId),
+      supplierId: String(poDto.supplierId),
+      quotationId: poDto.quotationId ? String(poDto.quotationId) : undefined,
+      supplierName: poDto.supplierName || suppliers.find((s) => s.id === String(poDto.supplierId))?.companyName || 'Supplier',
+      expectedDeliveryDate: poDto.expectedDeliveryDate || new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
+      createdBy: String(poDto.createdBy || currentUser.id),
+      creatorName: poDto.creatorName || currentUser.name,
+      status: poDto.status,
+      items: (poDto.items || []).map((it) => ({
+        ...it,
+        id: String(it.id || `POI-${Math.random()}`),
+        productId: String(it.productId),
+        productName: it.productName || products.find((p) => p.id === String(it.productId))?.name || 'Product',
+        sku: it.sku || products.find((p) => p.id === String(it.productId))?.sku || 'SKU-GEN',
+        tax: it.tax || 0,
+      })),
+    };
 
-    if (pr.status === 'REJECTED' || pr.status === 'CANCELLED') {
-      throw new Error('A purchase order cannot be created from a rejected or cancelled request.');
-    }
-
-    // Mark winning quotation as ACCEPTED, others for this PR as REJECTED
+    setPurchaseOrders((prev) => [formattedPO, ...prev]);
     setQuotations((prev) =>
-      prev.map((q) => {
-        if (q.purchaseRequestId === prId) {
-          return {
-            ...q,
-            status: q.id === quotationId ? 'ACCEPTED' : 'REJECTED',
-          };
-        }
-        return q;
-      })
+      prev.map((q) =>
+        q.purchaseRequestId === String(prId)
+          ? { ...q, status: q.id === String(quotationId) ? 'ACCEPTED' : 'REJECTED' }
+          : q
+      )
     );
 
-    // Update PR status
-    setPurchaseRequests((prev) =>
-      prev.map((p) => (p.id === prId ? { ...p, status: 'PO_CREATED' } : p))
-    );
-
-    const poNum = `PO-${3000 + purchaseOrders.length + 1}`;
-    const expDate = new Date(Date.now() + (quote.deliveryDays || 3) * 86400000)
-      .toISOString()
-      .split('T')[0];
-
-    const poItems = quote.items.map((qi, idx) => ({
-      id: `POI-${Date.now()}-${idx}`,
-      productId: qi.productId,
-      productName: qi.productName,
-      sku: products.find((p) => p.id === qi.productId)?.sku || 'SKU-GEN',
-      quantityOrdered: qi.quantity,
-      quantityReceived: 0,
-      unitPrice: qi.unitPrice,
-      tax: qi.taxPercent || 0,
-      total: qi.total,
-    }));
-
-    const newPO: PurchaseOrder = {
-      id: poNum,
-      poNumber: poNum,
-      purchaseRequestId: prId,
-      supplierId: quote.supplierId,
-      supplierName: quote.supplierName,
-      quotationId: quote.id,
-      createdBy: currentUser.id,
-      creatorName: currentUser.name,
-      orderDate: new Date().toISOString().split('T')[0],
-      expectedDeliveryDate: expDate,
-      subtotal: quote.subtotal,
-      tax: quote.tax,
-      totalAmount: quote.totalAmount,
-      paymentTerms: quote.paymentTerms,
-      status: 'ISSUED',
-      items: poItems,
-    };
-
-    setPurchaseOrders((prev) => [newPO, ...prev]);
-
-    addAuditLog(
-      'GENERATE_PURCHASE_ORDER',
-      'PURCHASE_ORDER',
-      poNum,
-      poNum,
-      `Generated Purchase Order ${poNum} awarded to ${quote.supplierName} for $${newPO.totalAmount.toLocaleString()} based on Quote ${quote.quotationNumber}.`
-    );
-
-    return newPO;
+    return formattedPO;
   };
 
-  // 7. Process Goods Receipt (Supports partial deliveries & updates inventory atomically)
-  const processGoodsReceipt = (data: {
-    purchaseOrderId: string;
+  // 7. Process Goods Receipt / GRN (Strict Backend Mutation)
+  const processGoodsReceipt = async (data: {
+    purchaseOrderId: string | number;
     carrier: string;
     trackingNumber: string;
     notes: string;
     items: {
-      poItemId: string;
-      productId: string;
+      poItemId?: string | number;
+      productId: string | number;
       receivedQuantity: number;
       acceptedQuantity: number;
       rejectedQuantity: number;
       rejectionReason?: string;
     }[];
-  }): GoodsReceipt => {
-    const po = purchaseOrders.find((p) => p.id === data.purchaseOrderId);
-    if (!po) throw new Error('Purchase order not found');
-
-    const grnNum = `GRN-${2000 + goodsReceipts.length + 1}`;
-    const grnId = grnNum;
-
-    // Build Receipt Items
-    const grnItems = data.items.map((it, idx) => {
-      const prod = products.find((p) => p.id === it.productId);
-      return {
-        id: `GRI-${Date.now()}-${idx}`,
-        poItemId: it.poItemId,
-        productId: it.productId,
-        productName: prod ? prod.name : 'Item',
-        receivedQuantity: it.receivedQuantity,
-        acceptedQuantity: it.acceptedQuantity,
-        rejectedQuantity: it.rejectedQuantity,
-        rejectionReason: it.rejectionReason,
-      };
-    });
-
-    const newGRN: GoodsReceipt = {
-      id: grnId,
-      receiptNumber: grnNum,
-      purchaseOrderId: po.id,
-      poNumber: po.poNumber,
-      receivedBy: currentUser.id,
-      receiverName: currentUser.name,
-      receiptDate: new Date().toISOString(),
-      notes: data.notes,
-      carrier: data.carrier,
-      trackingNumber: data.trackingNumber,
-      items: grnItems,
+  }): Promise<GoodsReceipt> => {
+    const grDto = await goodsReceiptService.create(data);
+    const parentPO = purchaseOrders.find((p) => p.id === String(grDto.purchaseOrderId));
+    const formattedGR: GoodsReceipt = {
+      ...grDto,
+      id: String(grDto.id),
+      receiptNumber: grDto.receiptNumber || `GRN-${grDto.id}`,
+      purchaseOrderId: String(grDto.purchaseOrderId),
+      poNumber: grDto.poNumber || parentPO?.poNumber || 'PO',
+      receivedBy: String(grDto.receivedBy || currentUser.id),
+      receiverName: grDto.receiverName || currentUser.name,
+      notes: grDto.notes || data.notes || '',
+      carrier: grDto.carrier || data.carrier || '',
+      trackingNumber: grDto.trackingNumber || data.trackingNumber || '',
+      items: (grDto.items || []).map((it) => ({
+        ...it,
+        id: String(it.id || `GRI-${Math.random()}`),
+        poItemId: String(it.poItemId || ''),
+        productId: String(it.productId),
+        productName: it.productName || products.find((p) => p.id === String(it.productId))?.name || 'Product',
+      })),
     };
 
-    // Calculate updated received quantities on PO
-    let totalOrdered = 0;
-    let totalAcceptedAcrossReceipts = 0;
+    setGoodsReceipts((prev) => [formattedGR, ...prev]);
 
-    const updatedPOItems = po.items.map((poItem) => {
-      const match = data.items.find((it) => it.poItemId === poItem.id);
-      const newlyAccepted = match ? match.acceptedQuantity : 0;
-      const cumulativeReceived = poItem.quantityReceived + newlyAccepted;
-
-      // Validate constraint: Received quantity cannot exceed ordered quantity
-      if (cumulativeReceived > poItem.quantityOrdered) {
-        throw new Error(
-          `Constraint Violation: Received quantity (${cumulativeReceived}) cannot exceed ordered quantity (${poItem.quantityOrdered}) for ${poItem.productName}.`
-        );
-      }
-
-      totalOrdered += poItem.quantityOrdered;
-      totalAcceptedAcrossReceipts += cumulativeReceived;
-
-      return {
-        ...poItem,
-        quantityReceived: cumulativeReceived,
-      };
-    });
-
-    const newPOStatus =
-      totalAcceptedAcrossReceipts >= totalOrdered ? 'FULLY_RECEIVED' : 'PARTIALLY_RECEIVED';
-
-    // Update PO
-    setPurchaseOrders((prev) =>
-      prev.map((p) =>
-        p.id === po.id
-          ? {
-              ...p,
-              status: newPOStatus,
-              items: updatedPOItems,
-            }
-          : p
-      )
-    );
-
-    // Save GRN
-    setGoodsReceipts((prev) => [newGRN, ...prev]);
-
-    // Update Inventory and log inventory transactions
-    const newTxns: InventoryTransaction[] = [];
-    setProducts((prev) =>
-      prev.map((prod) => {
-        const itemReceipt = grnItems.find((gi) => gi.productId === prod.id && gi.acceptedQuantity > 0);
-        if (itemReceipt) {
-          const newStock = prod.currentStock + itemReceipt.acceptedQuantity;
-          newTxns.push({
-            id: `ITX-${Date.now()}-${prod.id}`,
-            productId: prod.id,
-            productName: prod.name,
-            transactionType: 'GOODS_RECEIPT',
-            quantity: itemReceipt.acceptedQuantity,
-            stockAfter: newStock,
-            referenceType: 'GOODS_RECEIPT',
-            referenceNumber: grnNum,
-            performedBy: currentUser.name,
-            timestamp: new Date().toISOString(),
-          });
-          return {
-            ...prod,
-            currentStock: newStock,
-          };
-        }
-        return prod;
-      })
-    );
-
-    if (newTxns.length > 0) {
-      setInventoryTransactions((prev) => [...newTxns, ...prev]);
+    // Refresh affected purchase orders and inventory
+    try {
+      const updatedPOs = await purchaseOrderService.getAll();
+      setPurchaseOrders(updatedPOs.map((p) => ({ ...p, id: String(p.id) } as any)));
+    } catch {
+      // Ignore background refetch failure
     }
 
-    addAuditLog(
-      newPOStatus === 'FULLY_RECEIVED' ? 'PROCESS_GOODS_RECEIPT_FULL' : 'PROCESS_GOODS_RECEIPT_PARTIAL',
-      'GOODS_RECEIPT',
-      grnId,
-      grnNum,
-      `Recorded goods receipt ${grnNum} for PO ${po.poNumber}. Total accepted: ${data.items.reduce(
-        (acc, i) => acc + i.acceptedQuantity,
-        0
-      )} units. PO status now: ${newPOStatus}.`
-    );
-
-    // Re-evaluate pending/failed invoices for this PO automatically!
-    setInvoices((prev) =>
-      prev.map((inv) => {
-        if (inv.purchaseOrderId === po.id && inv.status === 'MATCH_FAILED') {
-          // Check if now all items are received
-          const matchResult = checkThreeWayMatch(inv, updatedPOItems);
-          if (matchResult.isMatch) {
-            return {
-              ...inv,
-              status: 'MATCH_VERIFIED',
-              mismatchReason: undefined,
-            };
-          }
-        }
-        return inv;
-      })
-    );
-
-    return newGRN;
+    return formattedGR;
   };
 
-  // Helper calculation for 3-way matching
-  const checkThreeWayMatch = (
-    inv: Invoice,
-    poItemsOverride?: PurchaseOrder['items']
-  ): ThreeWayMatchResult => {
-    const po = purchaseOrders.find((p) => p.id === inv.purchaseOrderId);
-    if (!po) {
+  // 8. Create Invoice (Strict Backend Mutation)
+  const createInvoice = async (data: {
+    purchaseOrderId: string | number;
+    invoiceNumber: string;
+    invoiceDate: string;
+    dueDate: string;
+    items: { productId: string | number; quantity: number; unitPrice: number; tax?: number }[];
+  }): Promise<Invoice> => {
+    const invDto = await invoiceService.create(data);
+    const parentPO = purchaseOrders.find((p) => p.id === String(invDto.purchaseOrderId));
+    const formattedInv: Invoice = {
+      ...invDto,
+      id: String(invDto.id),
+      supplierId: String(invDto.supplierId || parentPO?.supplierId || ''),
+      supplierName: invDto.supplierName || parentPO?.supplierName || suppliers.find((s) => s.id === String(invDto.supplierId))?.companyName || 'Supplier',
+      purchaseOrderId: String(invDto.purchaseOrderId),
+      poNumber: invDto.poNumber || parentPO?.poNumber || 'PO',
+      status: invDto.status,
+      items: (invDto.items || []).map((it) => ({
+        ...it,
+        id: String(it.id || `INVI-${Math.random()}`),
+        productId: String(it.productId),
+        productName: it.productName || products.find((p) => p.id === String(it.productId))?.name || 'Product',
+        tax: it.tax || 0,
+      })),
+    };
+
+    setInvoices((prev) => [formattedInv, ...prev]);
+    return formattedInv;
+  };
+
+  // 9. Three-Way Matching Evaluation (PO vs GRN vs Invoice)
+  const evaluateThreeWayMatch = (invoiceId: string | number): ThreeWayMatchResult => {
+    const inv = invoices.find((i) => i.id === String(invoiceId));
+    if (!inv) {
       return {
         isMatch: false,
         status: 'UNRECEIVED_GOODS',
-        summary: 'Linked Purchase Order not found.',
+        summary: 'Invoice not found in system records.',
         orderedQty: 0,
         receivedQty: 0,
-        invoicedQty: inv.items.reduce((s, i) => s + i.quantity, 0),
+        invoicedQty: 0,
         poUnitPrice: 0,
-        invoicedUnitPrice: inv.items[0]?.unitPrice || 0,
+        invoicedUnitPrice: 0,
         poTotal: 0,
-        invoicedTotal: inv.totalAmount,
-        discrepancies: ['Linked Purchase Order not found.'],
+        invoicedTotal: 0,
+        discrepancies: ['Invoice not found'],
         canPay: false,
       };
     }
 
-    const itemsToEvaluate = poItemsOverride || po.items;
+    const po = purchaseOrders.find((p) => p.id === String(inv.purchaseOrderId));
+    if (!po) {
+      return {
+        isMatch: false,
+        status: 'UNRECEIVED_GOODS',
+        summary: `Associated Purchase Order ${inv.purchaseOrderId} does not exist.`,
+        orderedQty: 0,
+        receivedQty: 0,
+        invoicedQty: inv.items.reduce((s, it) => s + it.quantity, 0),
+        poUnitPrice: 0,
+        invoicedUnitPrice: 0,
+        poTotal: 0,
+        invoicedTotal: inv.totalAmount,
+        discrepancies: ['Missing Purchase Order'],
+        canPay: false,
+      };
+    }
+
+    const relatedGRNs = goodsReceipts.filter((gr) => gr.purchaseOrderId === String(po.id));
     const discrepancies: string[] = [];
 
-    let totalOrdered = 0;
-    let totalReceived = 0;
-    let totalInvoiced = 0;
+    let totalOrderedQty = 0;
+    let totalReceivedQty = 0;
+    let totalInvoicedQty = 0;
+    let poUnitP = 0;
+    let invUnitP = 0;
 
-    itemsToEvaluate.forEach((poi) => {
-      totalOrdered += poi.quantityOrdered;
-      totalReceived += poi.quantityReceived;
+    for (const invItem of inv.items) {
+      totalInvoicedQty += invItem.quantity;
+      invUnitP = invItem.unitPrice;
 
-      const invoicedItem = inv.items.find((ii) => ii.productId === poi.productId);
-      if (!invoicedItem) {
-        discrepancies.push(`Item "${poi.productName}" ordered on PO was not included in invoice.`);
-      } else {
-        totalInvoiced += invoicedItem.quantity;
-        // Check unit price mismatch
-        if (Math.abs(invoicedItem.unitPrice - poi.unitPrice) > 0.01) {
-          discrepancies.push(
-            `Unit Price discrepancy for "${poi.productName}": PO agreed rate $${poi.unitPrice.toFixed(
-              2
-            )} vs Invoiced rate $${invoicedItem.unitPrice.toFixed(2)}`
-          );
-        }
-        // Check quantity mismatch: Invoiced cannot exceed Received
-        if (invoicedItem.quantity > poi.quantityReceived) {
-          discrepancies.push(
-            `Quantity discrepancy for "${poi.productName}": Supplier billed for ${invoicedItem.quantity} units, but warehouse has only received and accepted ${poi.quantityReceived} units (${invoicedItem.quantity - poi.quantityReceived} unfulfilled/pending).`
-          );
-        }
+      const poItem = po.items.find((p) => String(p.productId) === String(invItem.productId));
+      if (!poItem) {
+        discrepancies.push(`Billed item ${invItem.productName} is not in Purchase Order ${po.poNumber}.`);
+        continue;
       }
-    });
 
-    const isMatch = discrepancies.length === 0;
+      totalOrderedQty += poItem.quantityOrdered;
+      poUnitP = poItem.unitPrice;
+
+      let acceptedQtyForProduct = 0;
+      relatedGRNs.forEach((gr) => {
+        gr.items.forEach((gri) => {
+          if (String(gri.productId) === String(invItem.productId)) {
+            acceptedQtyForProduct += gri.acceptedQuantity;
+          }
+        });
+      });
+
+      totalReceivedQty += acceptedQtyForProduct;
+
+      // Rule A: Quantity Invariance
+      if (invItem.quantity > acceptedQtyForProduct) {
+        const gap = invItem.quantity - acceptedQtyForProduct;
+        discrepancies.push(
+          `Overbilling: Invoiced ${invItem.quantity} units of ${invItem.productName}, but warehouse has only accepted ${acceptedQtyForProduct} units (${gap} units missing).`
+        );
+      }
+
+      // Rule B: Price Invariance
+      if (Math.abs(invItem.unitPrice - poItem.unitPrice) > 0.01) {
+        discrepancies.push(
+          `Price Variance: Billed at $${invItem.unitPrice.toFixed(2)}/unit, but agreed PO price was $${poItem.unitPrice.toFixed(2)}/unit.`
+        );
+      }
+    }
+
+    const isMatch = discrepancies.length === 0 && totalReceivedQty >= totalInvoicedQty;
+
+    let status: 'PERFECT_MATCH' | 'QUANTITY_MISMATCH' | 'PRICE_MISMATCH' | 'UNRECEIVED_GOODS' = 'PERFECT_MATCH';
+    if (discrepancies.some((d) => d.includes('Overbilling'))) {
+      status = 'QUANTITY_MISMATCH';
+    } else if (discrepancies.some((d) => d.includes('Price Variance'))) {
+      status = 'PRICE_MISMATCH';
+    } else if (totalReceivedQty === 0) {
+      status = 'UNRECEIVED_GOODS';
+    }
 
     return {
       isMatch,
-      status: isMatch
-        ? 'PERFECT_MATCH'
-        : totalInvoiced > totalReceived
-        ? 'QUANTITY_MISMATCH'
-        : 'PRICE_MISMATCH',
+      status,
       summary: isMatch
-        ? '3-Way Match Verified: Purchase Order, Goods Receipt, and Supplier Invoice match perfectly.'
-        : `Discrepancy detected: ${discrepancies.join('; ')}`,
-      orderedQty: totalOrdered,
-      receivedQty: totalReceived,
-      invoicedQty: totalInvoiced,
-      poUnitPrice: itemsToEvaluate[0]?.unitPrice || 0,
-      invoicedUnitPrice: inv.items[0]?.unitPrice || 0,
+        ? `Three-Way Match 100% verified against PO ${po.poNumber} and warehouse receipts.`
+        : `Discrepancy detected between PO ${po.poNumber}, warehouse receipts, and vendor invoice.`,
+      orderedQty: totalOrderedQty,
+      receivedQty: totalReceivedQty,
+      invoicedQty: totalInvoicedQty,
+      poUnitPrice: poUnitP,
+      invoicedUnitPrice: invUnitP,
       poTotal: po.totalAmount,
       invoicedTotal: inv.totalAmount,
       discrepancies,
@@ -765,231 +858,93 @@ export const ProcurementProvider: React.FC<{ children: React.ReactNode }> = ({ c
     };
   };
 
-  // 8. Create Invoice
-  const createInvoice = (data: {
-    purchaseOrderId: string;
-    invoiceNumber: string;
-    invoiceDate: string;
-    dueDate: string;
-    items: { productId: string; quantity: number; unitPrice: number; tax: number }[];
-  }): Invoice => {
-    const po = purchaseOrders.find((p) => p.id === data.purchaseOrderId);
-    if (!po) throw new Error('Purchase order not found');
-
-    let subtotal = 0;
-    let taxTotal = 0;
-    const items = data.items.map((it, idx) => {
-      const prod = products.find((p) => p.id === it.productId);
-      const gross = it.quantity * it.unitPrice;
-      subtotal += gross;
-      taxTotal += it.tax || 0;
-      return {
-        id: `INVI-${Date.now()}-${idx}`,
-        productId: it.productId,
-        productName: prod ? prod.name : 'Product',
-        quantity: it.quantity,
-        unitPrice: it.unitPrice,
-        tax: it.tax || 0,
-        total: gross + (it.tax || 0),
-      };
-    });
-
-    const tempInvoice: Invoice = {
-      id: data.invoiceNumber,
-      invoiceNumber: data.invoiceNumber,
-      supplierId: po.supplierId,
-      supplierName: po.supplierName,
-      purchaseOrderId: po.id,
-      poNumber: po.poNumber,
-      invoiceDate: data.invoiceDate,
-      dueDate: data.dueDate,
-      subtotal,
-      tax: taxTotal,
-      totalAmount: subtotal + taxTotal,
-      status: 'PENDING_MATCH',
-      items,
-    };
-
-    // Run 3-Way Match right away
-    const match = checkThreeWayMatch(tempInvoice);
-    tempInvoice.status = match.isMatch ? 'MATCH_VERIFIED' : 'MATCH_FAILED';
-    if (!match.isMatch) {
-      tempInvoice.mismatchReason = match.summary;
-    }
-
-    setInvoices((prev) => [tempInvoice, ...prev]);
-
-    addAuditLog(
-      match.isMatch ? 'REGISTER_INVOICE_MATCHED' : 'REGISTER_INVOICE_MISMATCH_LOCKED',
-      'INVOICE',
-      tempInvoice.id,
-      tempInvoice.invoiceNumber,
-      `Registered Invoice ${tempInvoice.invoiceNumber} for PO ${po.poNumber} ($${tempInvoice.totalAmount.toLocaleString()}). Three-Way Match Status: ${
-        tempInvoice.status
-      }.`
-    );
-
-    return tempInvoice;
-  };
-
-  // 9. Evaluate Three Way Match
-  const evaluateThreeWayMatch = (invoiceId: string): ThreeWayMatchResult => {
-    const inv = invoices.find((i) => i.id === invoiceId);
-    if (!inv) throw new Error('Invoice not found');
-    return checkThreeWayMatch(inv);
-  };
-
-  // 10. Process Payment
-  const processPayment = (data: {
-    invoiceId: string;
-    paymentMethod: 'NEFT_RTGS' | 'BANK_TRANSFER' | 'CORPORATE_CARD' | 'CHEQUE';
+  // 10. Process Payment (Strict Backend Mutation)
+  const processPayment = async (data: {
+    invoiceId: string | number;
+    paymentMethod: PaymentMethod;
     referenceNumber: string;
-  }): Payment => {
-    const inv = invoices.find((i) => i.id === data.invoiceId);
-    if (!inv) throw new Error('Invoice not found');
-
-    if (inv.status === 'MATCH_FAILED' || inv.status === 'PENDING_MATCH') {
-      throw new Error(
-        'Critical Business Rule Violation: An invoice cannot be paid when three-way matching fails. Resolve goods delivery discrepancy first.'
-      );
-    }
-
-    if (inv.status === 'PAID') {
-      throw new Error('Invoice is already paid.');
-    }
-
+  }): Promise<Payment> => {
+    const payDto = await paymentService.process(data);
     const newPayment: Payment = {
-      id: `PAY-${Date.now().toString().slice(-4)}`,
-      invoiceId: inv.id,
-      invoiceNumber: inv.invoiceNumber,
-      amount: inv.totalAmount,
-      paymentDate: new Date().toISOString(),
-      paymentMethod: data.paymentMethod,
-      referenceNumber: data.referenceNumber,
-      processedBy: currentUser.id,
-      processorName: currentUser.name,
-      status: 'COMPLETED',
+      ...payDto,
+      id: String(payDto.id),
+      invoiceId: String(payDto.invoiceId),
+      invoiceNumber: payDto.invoiceNumber || 'INV-PAID',
+      status: payDto.status,
+      processedBy: String(payDto.processedBy || currentUser.id),
+      processorName: payDto.processorName || currentUser.name,
     };
 
     setPayments((prev) => [newPayment, ...prev]);
+
+    // Update invoice status in state to PAID
     setInvoices((prev) =>
-      prev.map((i) => (i.id === inv.id ? { ...i, status: 'PAID' } : i))
-    );
-
-    // Also close PO if fully received and paid
-    setPurchaseOrders((prev) =>
-      prev.map((p) => {
-        if (p.id === inv.purchaseOrderId && p.status === 'FULLY_RECEIVED') {
-          return { ...p, status: 'CLOSED' };
-        }
-        return p;
-      })
-    );
-
-    addAuditLog(
-      'PROCESS_PAYMENT_DISBURSED',
-      'PAYMENT',
-      newPayment.id,
-      newPayment.referenceNumber,
-      `Disbursed payment of $${inv.totalAmount.toLocaleString()} for Invoice ${inv.invoiceNumber} via ${data.paymentMethod} (Ref: ${data.referenceNumber}).`
+      prev.map((i) => (i.id === String(data.invoiceId) ? { ...i, status: 'PAID' } : i))
     );
 
     return newPayment;
   };
 
-  // 11. Live Demo Shortcut: Resolve Remaining Delivery (from 8 to 10 units for PR-1001/PO-3001)
-  const resolveMissingDeliveryShortcut = (poId: string) => {
-    const po = purchaseOrders.find((p) => p.id === poId);
-    if (!po) return;
+  // 11. Adjust Stock (Strict Backend Mutation)
+  const adjustStock = async (data: {
+    productId: string | number;
+    quantity: number;
+    type: 'RECEIPT' | 'ADJUSTMENT' | 'RETURN';
+    remarks?: string;
+  }): Promise<InventoryTransaction> => {
+    const transDto = await inventoryService.adjustStock(data);
+    const newTrans: InventoryTransaction = {
+      ...transDto,
+      id: String(transDto.id),
+      productId: String(transDto.productId),
+      productName: transDto.productName || products.find((p) => p.id === String(transDto.productId))?.name || 'Product',
+      referenceNumber: transDto.referenceNumber || `TX-${Date.now()}`,
+      performedBy: transDto.performedBy || currentUser.name,
+    };
 
-    const poItem = po.items[0];
-    if (!poItem) return;
+    setInventoryTransactions((prev) => [newTrans, ...prev]);
 
-    const remainingQty = poItem.quantityOrdered - poItem.quantityReceived;
-    if (remainingQty <= 0) return;
+    // Update product current stock
+    setProducts((prev) =>
+      prev.map((p) =>
+        p.id === String(data.productId)
+          ? { ...p, currentStock: transDto.stockAfter }
+          : p
+      )
+    );
 
-    processGoodsReceipt({
-      purchaseOrderId: po.id,
-      carrier: 'FedEx Freight Express (Final Consignment)',
-      trackingNumber: 'FX-9920148191-FINAL',
-      notes: `Final shipment delivered. Remaining ${remainingQty} units inspected and accepted with zero defects.`,
-      items: [
-        {
-          poItemId: poItem.id,
-          productId: poItem.productId,
-          receivedQuantity: remainingQty,
-          acceptedQuantity: remainingQty,
-          rejectedQuantity: 0,
-        },
-      ],
-    });
-
-    setCurrentDemoStep(7); // Advances demo to Step 7
+    return newTrans;
   };
 
-  // Reset to initial clean state
-  const resetToInitialDemoState = () => {
-    localStorage.clear();
-    setCurrentUser(INITIAL_USERS[0]);
-    setProducts(INITIAL_PRODUCTS);
-    setPurchaseRequests(INITIAL_PURCHASE_REQUESTS);
-    setQuotations(INITIAL_QUOTATIONS);
-    setPurchaseOrders(INITIAL_PURCHASE_ORDERS);
-    setGoodsReceipts(INITIAL_GOODS_RECEIPTS);
-    setInvoices(INITIAL_INVOICES);
-    setPayments(INITIAL_PAYMENTS);
-    setInventoryTransactions(INITIAL_INVENTORY_TRANSACTIONS);
-    setAuditLogs(INITIAL_AUDIT_LOGS);
-    setCurrentDemoStep(5);
-    setActiveTab('dashboard');
-  };
-
-  // Load specific step in the 8-step demo story
+  // Walkthrough navigation without fake role switching
   const loadDemoStep = (stepNumber: number) => {
     setCurrentDemoStep(stepNumber);
     switch (stepNumber) {
       case 1:
-        // Step 1: Employee Alex raises PR-1001
-        switchRole('EMPLOYEE');
         setActiveTab('requests');
         break;
       case 2:
-        // Step 2: Manager Sarah reviews & approves
-        switchRole('MANAGER');
         setActiveTab('approvals');
         break;
       case 3:
-        // Step 3: Procurement Officer Marcus compares quotations
-        switchRole('PROCUREMENT');
         setActiveTab('quotations');
         break;
       case 4:
-        // Step 4: Purchase order issued
-        switchRole('PROCUREMENT');
         setActiveTab('orders');
         break;
       case 5:
-        // Step 5: Goods Receipt partial (8/10)
-        switchRole('PROCUREMENT');
         setActiveTab('receiving');
         break;
       case 6:
-        // Step 6: Finance sees invoice for 10 units -> 3-Way Match Fails & Blocks Payment!
-        switchRole('FINANCE');
-        setActiveTab('finance');
-        break;
       case 7:
-        // Step 7: Resolve delivery and re-match!
-        switchRole('FINANCE');
         setActiveTab('finance');
         break;
       case 8:
-        // Step 8: Payment processed & Inventory Audited!
-        switchRole('ADMIN');
         setActiveTab('inventory');
         break;
       default:
         setActiveTab('dashboard');
+        break;
     }
   };
 
@@ -997,9 +952,7 @@ export const ProcurementProvider: React.FC<{ children: React.ReactNode }> = ({ c
     <ProcurementContext.Provider
       value={{
         currentUser,
-        setCurrentUser,
-        switchRole,
-        users,
+        users: [],
         departments,
         approvalRules,
         products,
@@ -1012,8 +965,15 @@ export const ProcurementProvider: React.FC<{ children: React.ReactNode }> = ({ c
         payments,
         inventoryTransactions,
         auditLogs,
+        dashboardSummary,
+        reportsSummary,
         activeTab,
         setActiveTab,
+        isLoading,
+        apiError,
+        moduleErrors,
+        refreshAllData,
+        fetchModuleData,
         createPurchaseRequest,
         approvePurchaseRequest,
         rejectPurchaseRequest,
@@ -1024,8 +984,7 @@ export const ProcurementProvider: React.FC<{ children: React.ReactNode }> = ({ c
         createInvoice,
         evaluateThreeWayMatch,
         processPayment,
-        resolveMissingDeliveryShortcut,
-        resetToInitialDemoState,
+        adjustStock,
         loadDemoStep,
         currentDemoStep,
         setCurrentDemoStep,

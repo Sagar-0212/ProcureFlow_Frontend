@@ -8,7 +8,7 @@ interface Props {
 }
 
 export const NewInvoiceModal: React.FC<Props> = ({ isOpen, onClose }) => {
-  const { purchaseOrders, createInvoice, currentUser, switchRole } = useProcurement();
+  const { purchaseOrders, createInvoice, currentUser } = useProcurement();
 
   const [selectedPOId, setSelectedPOId] = useState<string>(purchaseOrders[0]?.id || '');
   const [invoiceNumber, setInvoiceNumber] = useState(`INV-${Math.floor(1000 + Math.random() * 9000)}`);
@@ -24,7 +24,7 @@ export const NewInvoiceModal: React.FC<Props> = ({ isOpen, onClose }) => {
 
   const po = purchaseOrders.find((p) => p.id === selectedPOId);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -33,12 +33,13 @@ export const NewInvoiceModal: React.FC<Props> = ({ isOpen, onClose }) => {
       return;
     }
 
-    try {
-      if (currentUser.role !== 'FINANCE' && currentUser.role !== 'ADMIN') {
-        switchRole('FINANCE');
-      }
+    if (currentUser.role !== 'FINANCE_OFFICER' && currentUser.role !== 'ADMIN') {
+      setError('Invoice registration requires FINANCE_OFFICER or ADMIN role.');
+      return;
+    }
 
-      createInvoice({
+    try {
+      await createInvoice({
         purchaseOrderId: po.id,
         invoiceNumber,
         invoiceDate,
@@ -55,7 +56,7 @@ export const NewInvoiceModal: React.FC<Props> = ({ isOpen, onClose }) => {
 
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Failed to register invoice.');
+      setError(err?.message || 'Failed to register invoice.');
     }
   };
 

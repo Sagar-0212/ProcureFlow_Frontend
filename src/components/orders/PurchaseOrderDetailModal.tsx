@@ -33,7 +33,7 @@ export const PurchaseOrderDetailModal: React.FC<Props> = ({ po, onClose, onRecei
               </h3>
               <span
                 className={`text-[11px] font-semibold px-2 py-0.5 rounded ${
-                  po.status === 'FULLY_RECEIVED' || po.status === 'CLOSED'
+                  po.status === 'FULLY_RECEIVED' || po.status === 'COMPLETED'
                     ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                     : po.status === 'PARTIALLY_RECEIVED'
                     ? 'bg-amber-50 text-amber-700 border border-amber-200 font-semibold'
@@ -172,7 +172,7 @@ export const PurchaseOrderDetailModal: React.FC<Props> = ({ po, onClose, onRecei
             Close
           </button>
 
-          {po.status !== 'FULLY_RECEIVED' && po.status !== 'CLOSED' && (
+          {po.status !== 'FULLY_RECEIVED' && po.status !== 'COMPLETED' && po.status !== 'CANCELLED' && (
             <button
               type="button"
               onClick={() => {

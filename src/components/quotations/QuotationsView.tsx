@@ -13,19 +13,22 @@ import {
   Truck,
 } from 'lucide-react';
 import { QuotationComparisonModal } from './QuotationComparisonModal';
+import { NewQuotationModal } from './NewQuotationModal';
 
 export const QuotationsView: React.FC = () => {
   const { purchaseRequests, quotations, suppliers } = useProcurement();
 
-  // Find PRs that are approved or have quotations
+  // Find PRs that are approved
   const approvedPRs = purchaseRequests.filter(
-    (pr) => pr.status === 'APPROVED' || pr.status === 'PO_CREATED'
+    (pr) => pr.status === 'APPROVED'
   );
 
   const [selectedPRForComparison, setSelectedPRForComparison] = useState<PurchaseRequest | null>(
     approvedPRs[0] || null
   );
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isNewQuoteModalOpen, setIsNewQuoteModalOpen] = useState(false);
+  const [activePRForNewQuote, setActivePRForNewQuote] = useState<string | undefined>(undefined);
 
   return (
     <div className="space-y-6">
@@ -40,18 +43,31 @@ export const QuotationsView: React.FC = () => {
           </p>
         </div>
 
-        {approvedPRs.length > 0 && (
+        <div className="flex items-center gap-2.5">
           <button
             onClick={() => {
-              setSelectedPRForComparison(approvedPRs[0]);
-              setIsModalOpen(true);
+              setActivePRForNewQuote(approvedPRs[0]?.id);
+              setIsNewQuoteModalOpen(true);
             }}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors"
+            className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors shrink-0"
           >
-            <Scale className="w-4 h-4" />
-            <span>Launch Comparison Matrix</span>
+            <Plus className="w-4 h-4" />
+            <span>Register Vendor Bid</span>
           </button>
-        )}
+
+          {approvedPRs.length > 0 && (
+            <button
+              onClick={() => {
+                setSelectedPRForComparison(approvedPRs[0]);
+                setIsModalOpen(true);
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors shrink-0"
+            >
+              <Scale className="w-4 h-4" />
+              <span>Launch Comparison Matrix</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Requisitions Ready for Quotation / Comparison */}
@@ -167,6 +183,13 @@ export const QuotationsView: React.FC = () => {
         pr={selectedPRForComparison}
         quotations={quotations}
         onClose={() => setIsModalOpen(false)}
+      />
+
+      {/* Manual Vendor Bid Registration Modal */}
+      <NewQuotationModal
+        isOpen={isNewQuoteModalOpen}
+        defaultPRId={activePRForNewQuote}
+        onClose={() => setIsNewQuoteModalOpen(false)}
       />
     </div>
   );
